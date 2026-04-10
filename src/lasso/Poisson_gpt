@@ -1,0 +1,276 @@
+import numpy as np
+from numpy.fft import rfft2, irfft2
+from scipy.ndimage import gaussian_filter
+from dataclasses import dataclass
+
+# ----------------------------
+# Utilities: PSF -> OTF, FFT conv
+# ----------------------------
+def pad_to_shape(psf, shape):
+    out = np.zeros(shape, dtype=psf.dtype)
+    h, w = psf.shape
+    out[:h, :w] = psf
+    return out
+
+def circ_shift(arr, shift):
+    return np.roll(np.roll(arr, shift[0], axis=0), shift[1], axis=1)
+
+def psf2otf(psf, shape):
+    """
+    Convert spatial PSF (assumed small, centered anywhere) to OTF for periodic conv.
+    We center the PSF at (0,0) by circularly shifting so its "center" lands at (0,0).
+    """
+    psf = pad_to_shape(psf, shape)
+    # move PSF center to (0,0) for circular convolution
+    cy = (psf.shape[0] - 1) // 2
+    cx = (psf.shape[1] - 1) // 2
+    psf = circ_shift(psf, (-cy, -cx))
+    # real-to-complex FFT (image is real)
+    otf = rfft2(psf)
+    return otf
+
+def conv2_fft_real(x, otf):
+    # circular conv via FFT, keeping real result
+    return irfft2(rfft2(x) * otf, s=x.shape)
+
+# ----------------------------
+# Down/Up sampling operators and adjoints
+# ----------------------------
+def downsample(x, s):
+    """Keep every s-th pixel in each dimension (top-left anchored)."""
+    return x[::s, ::s]
+
+def upsample_adjoint(z, s, out_shape):
+    """
+    Adjoint of downsample: scatter z into a zero image at s-grid locations.
+    """
+    Y, X = out_shape
+    out = np.zeros((Y, X), dtype=z.dtype)
+    out[::s, ::s] = z
+    return out
+
+# ----------------------------
+# Forward operator A and adjoint A^T
+# ----------------------------
+@dataclass
+class ForwardModel:
+    otf_blur: np.ndarray  # OTF for blur on HR grid
+    scale: int            # downsampling factor
+    hr_shape: tuple       # (H, W) of high-res unknown
+    lr_shape: tuple       # (h, w) of observations
+
+    def A(self, x):
+        """A x = Downsample( Blur(x) )."""
+        bx = conv2_fft_real(x, self.otf_blur)
+        return downsample(bx, self.scale)
+
+    def AT(self, z):
+        """A^T z = Blur^T( UpsampleAdjoint(z) ) with circular BCs.
+        For symmetric PSF, Blur^T == Blur."""
+        uz = upsample_adjoint(z, self.scale, self.hr_shape)
+        # For real, symmetric PSF, adjoint equals blur (same OTF).
+        return conv2_fft_real(uz, np.conj(self.otf_blur))
+
+# ----------------------------
+# KL (Poisson) data term and gradient
+# ----------------------------
+def kl_poisson(y, Ax, eps=1e-8):
+    # sum_i [ Ax_i - y_i * log(Ax_i + eps) ]
+    return np.sum(Ax - y * np.log(Ax + eps))
+
+def grad_kl_AT(model: ForwardModel, x, y, eps=1e-8):
+    Ax = model.A(x)
+    # gradient of KL wrt x: A^T(1 - y/(Ax+eps))
+    resid = 1.0 - y / (Ax + eps)
+    return model.AT(resid), Ax
+
+# ----------------------------
+# Prox for lambda||x||_1 + indicator_{x>=0}: nonnegative soft-thresholding
+# ----------------------------
+def prox_l1_nonneg(v, tau_lambda):
+    return np.maximum(0.0, v - tau_lambda)
+
+# ----------------------------
+# FISTA with backtracking for Poisson-KL + L1, x >= 0
+# ----------------------------
+@dataclass
+class FistaOptions:
+    lam: float = 1e-3
+    max_iter: int = 300
+    tol_rel: float = 1e-5
+    bt_init_L: float = 1.0
+    bt_eta: float = 2.0
+    eps_kl: float = 1e-8
+    verbose: bool = True
+    keep_history: bool = True
+
+@dataclass
+class FistaResult:
+    x: np.ndarray
+    obj_history: list
+    step_history: list
+    iters: int
+
+def fista_kl_l1_nonneg(model: ForwardModel, y, x0=None, opts: FistaOptions = FistaOptions()):
+    H, W = model.hr_shape
+    if x0 is None:
+        # sensible init: upsampled (adjoint) of y (nonnegative)
+        x = np.maximum(0.0, model.AT(y))
+    else:
+        x = np.maximum(0.0, x0.copy())
+
+    z = x.copy()
+    t = 1.0
+    L = opts.bt_init_L
+
+    obj_hist = []
+    step_hist = []
+
+    # Helper: objective value
+    def objective(x, Ax=None):
+        if Ax is None:
+            Ax = model.A(x)
+        return kl_poisson(y, Ax, opts.eps_kl) + opts.lam * np.sum(x)
+
+    # Initial objective
+    Ax = model.A(x)
+    fval = objective(x, Ax)
+    if opts.keep_history:
+        obj_hist.append(fval)
+        step_hist.append(1.0 / L)
+
+    for k in range(1, opts.max_iter + 1):
+        # Gradient at z
+        g, Az = grad_kl_AT(model, z, y, opts.eps_kl)
+
+        # Backtracking line search
+        while True:
+            tau = 1.0 / L
+            # Prox-gradient step on z
+            x_new = prox_l1_nonneg(z - tau * g, tau * opts.lam)
+
+            # Check FISTA/BT condition: f(x_new) <= Q_L(x_new, z)
+            Ax_new = model.A(x_new)
+            f_new = kl_poisson(y, Ax_new, opts.eps_kl) + opts.lam * np.sum(x_new)
+
+            # Majorizer Q_L = f(z) + <∇f(z), x_new - z> + (L/2)||x_new - z||^2 + lam*||x_new||_1 (already in f_new)
+            # But since f_new already includes lam*|x_new|_1, we only compare data term:
+            # Use the standard BT surrogate for smooth part only:
+            # f_smooth(x_new) <= f_smooth(z) + <∇f_smooth(z), d> + (L/2)||d||^2
+            d = x_new - z
+            # smooth at z:
+            fz_smooth = kl_poisson(y, Az, opts.eps_kl)
+            lhs = kl_poisson(y, Ax_new, opts.eps_kl)
+            rhs = fz_smooth + np.sum(g * d) + 0.5 * L * np.sum(d * d)
+
+            if lhs <= rhs + 1e-12:
+                break
+            L *= opts.bt_eta
+
+        # Nesterov update
+        t_new = 0.5 * (1 + np.sqrt(1 + 4 * t * t))
+        z = x_new + ((t - 1) / t_new) * (x_new - x)
+        x, t = x_new, t_new
+        fval = f_new
+        if opts.keep_history:
+            obj_hist.append(fval)
+            step_hist.append(1.0 / L)
+
+        # stopping (relative change in objective)
+        if k > 5:
+            rel = abs(obj_hist[-2] - obj_hist[-1]) / max(1.0, obj_hist[-2])
+            if rel < opts.tol_rel:
+                if opts.verbose:
+                    print(f"Converged at iter {k}: rel_obj={rel:.3e}")
+                break
+
+        if opts.verbose and (k % 25 == 0 or k == 1):
+            print(f"iter {k:4d}  obj={fval:.6e}  step={1.0/L:.3e}")
+
+    return FistaResult(x=x, obj_history=obj_hist, step_history=step_hist, iters=k)
+
+# ----------------------------
+# Demo: synthesize LR Poisson data from HR image and reconstruct
+# ----------------------------
+if __name__ == "__main__":
+    rng = np.random.default_rng(0)
+
+    # High-res latent (H,W)
+    H, W = 128, 128
+    # Downsample factor
+    s = 2
+    h, w = H // s, W // s
+
+    # Create a sparse nonnegative ground truth (few bright dots + smooth blobs)
+    x_true = np.zeros((H, W), dtype=float)
+    # sparse spikes
+    for _ in range(80):
+        y0 = rng.integers(0, H)
+        x0 = rng.integers(0, W)
+        x_true[y0, x0] = rng.uniform(0.5, 2.0)
+    # add a couple smooth bright regions
+    x_true += gaussian_filter((rng.random((H, W)) < 0.001).astype(float) * 50.0, 3.0)
+    x_true = np.maximum(0, x_true)
+
+    # PSF (Gaussian)
+    psf_size = 15
+    sigma = 1.2
+    yy, xx = np.mgrid[:psf_size, :psf_size]
+    cy = (psf_size - 1) / 2
+    cx = (psf_size - 1) / 2
+    psf = np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * sigma ** 2))
+    psf /= psf.sum()
+
+    # Build forward model
+    otf = psf2otf(psf, (H, W))
+    model = ForwardModel(otf_blur=otf, scale=s, hr_shape=(H, W), lr_shape=(h, w))
+
+    # Generate noiseless rate and Poisson observations on LR grid
+    rate_lr = model.A(x_true)                   # expected counts
+    # Choose a global intensity/scaling to simulate photon budget
+    rate_lr = model.A(x_true)                   # expected counts on LR grid
+    # sanitize numerical artifacts:
+    rate_lr = np.nan_to_num(rate_lr, nan=0.0, posinf=0.0, neginf=0.0)
+    rate_lr = np.clip(rate_lr, 0.0, None)
+
+    photon_scale = 20.0
+    rate_lr_scaled = photon_scale * rate_lr
+    y_obs = rng.poisson(rate_lr_scaled)
+
+    # Reconstruct (note: model uses unscaled operator, so scale y accordingly)
+    # We want KL(y || A x * photon_scale). Equivalently define y' = y and compare to A x * scale.
+    # In our implementation, KL uses Ax directly. So feed y' and internally compare Ax' = A(x)*photon_scale,
+    # or simpler, divide y by photon_scale and keep Ax (unscaled). We'll choose the latter:
+    y_for_kl = y_obs / photon_scale
+
+    # Run FISTA
+    opts = FistaOptions(
+        lam=1e-3,       # sparsity weight (tune!)
+        max_iter=400,
+        tol_rel=5e-6,
+        bt_init_L=1.0,
+        bt_eta=2.0,
+        eps_kl=1e-8,
+        verbose=True,
+        keep_history=True
+    )
+
+    # Warm start with upsampled adjoint
+    x0 = np.maximum(0.0, model.AT(y_for_kl))
+    result = fista_kl_l1_nonneg(model, y_for_kl, x0=x0, opts=opts)
+
+    x_rec = result.x
+
+    # Simple quality report (PSNR-like on scaled range)
+    mse = np.mean((x_rec - x_true) ** 2)
+    maxv = np.max(x_true) if np.max(x_true) > 0 else 1.0
+    psnr = 20 * np.log10(maxv / np.sqrt(mse + 1e-12))
+    print(f"Done in {result.iters} iters | MSE={mse:.3e} | PSNR~{psnr:.2f} dB")
+
+    # If you want to visualize, uncomment (requires matplotlib):
+    # import matplotlib.pyplot as plt
+    # fig, axs = plt.subplots(1, 3, figsize=(12,4))
+    # axs[0].imshow(x_true, cmap='gray'); axs[0].set_title('HR truth'); axs[0].axis('off')
+    # axs[1].imshow(rate_lr_scaled, cmap='gray'); axs[1].set_title('LR rate (scaled)'); axs[1].axis('off')
+    # axs[2].imshow(x_rec, cmap='gray'); axs[2].set_title('Reconstruction'); axs[2].axis('off')
+    # plt.tight_layout(); plt.show()

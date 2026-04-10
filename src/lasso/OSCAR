@@ -1,0 +1,270 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from utils_lasso import grad_f, hessian_f
+import gurobipy as gp
+from gurobipy import GRB
+import cvxpy as cp
+from OSCAR_utils import *
+
+def sub_problem1_gurobi(A, yk, zk, b, w1, w2, time_limit=5.0, silent=True):
+    """
+    Gurobi port of your CVXPY subproblem:
+        minimize  0.5 * ||Q d||^2 - (g + z_k)^T d
+        subject to d[i] == d[i+1]  for i with |sum_{j=1}^i y_k[j]| <= 1 - 1e-4
+    where Q = hessian_f(A) in your code (be sure what Q represents; see note above).
+    """
+    # Inputs and shapes
+    H = np.asarray(hessian_f(A), dtype=float)  # (n,n)
+    g  = np.asarray(grad_f(A, yk, b), dtype=float)  # (n,)
+    zk = np.asarray(zk, dtype=float)
+    n = zk.shape[0]
+    Q, active_idx, lambdas, Lambda = build_Q_from_oscar(n, zk, w1, w2)
+    #print('parallel space basis Q:', Q)
+    num_col = Q.shape[1]
+    c = g + zk
+
+    # Build model
+    m = gp.Model("sub_problem1")
+    if silent:
+        m.Params.OutputFlag = 0
+    if time_limit is not None:
+        m.Params.TimeLimit = float(time_limit)
+
+    d = m.addMVar(n, lb=-GRB.INFINITY, name="d")
+    alpha = m.addMVar(num_col, lb=-GRB.INFINITY, name="alpha") 
+    # Objective: 0.5 * d^T H d - c^T d
+    # gurobipy supports @ with MVar and numpy arrays
+    quad = 0.5 * (d @ H @ d)
+    lin  = c @ d
+    m.setObjective(quad - lin, GRB.MINIMIZE)
+
+    # Constraints
+    if num_col > 0:
+        m.addConstr(d - Q @ alpha == 0, name="parallel_space")
+    m.setParam('Outputflag', 0)  
+    m.optimize()
+
+    if m.Status == GRB.OPTIMAL:
+        return d.X
+    elif m.Status == GRB.TIME_LIMIT:
+        #print("Gurobi reached time limit, returning partial solution (zeros).")
+        return np.zeros(n, dtype=float)
+    else:
+        #print(f"Gurobi status: {m.Status}. Returning zeros.")
+        return np.zeros(n, dtype=float)
+    
+
+# ---------- main solver ----------
+def ista_oscar(
+    A: np.ndarray,
+    b: np.ndarray,
+    w1: float,
+    w2: float,               # your OSCAR prox (see notes below)
+    x0: np.ndarray,
+    max_iter: int = 500,
+    step_scale: float = 0.99,
+    tol_rel: float = 1e-6,
+    record_every: int = 1,
+    verbose: bool = False,
+):
+    """
+    Solve  min_x  1/2 ||A x - b||^2 + OSCAR(x; lam1, lam2)
+    via ISTA:  x^{k+1} = prox_{t * OSCAR}( x^k - t * ∇f(x^k) ),  f(x)=1/2||Ax-b||^2
+    """
+    A = np.asarray(A)
+    b = np.asarray(b)
+    m, n = A.shape
+
+    if x0 is None:
+        x = np.zeros(n, dtype=float)
+    else:
+        x = np.asarray(x0, dtype=float).copy()
+
+    L = lipschitz_from_spectral_norm(A)
+    if L <= 0:
+        raise ValueError("Nonpositive Lipschitz constant; check matrix A.")
+    t = step_scale / L
+
+    obj_vals = []
+    x_hist = []
+
+    prev_val = obj_least_squares_plus_oscar(A, b, x, w1, w2)
+    obj_vals.append(prev_val)
+
+    for k in range(1, max_iter + 1):
+        # gradient step
+        g = grad_f(A, x, b)
+        y = x - t * g
+
+        # proximal step (supports both styles A and B)
+
+        x_new = prox_oscar(y, t, w1, w2, positive=False)
+
+        if k % record_every == 0:
+            val = obj_least_squares_plus_oscar(A, b, x_new, w1, w2)
+            obj_vals.append(val)
+            if verbose:
+                print(f"iter {k:4d}: obj = {val:.6e}")
+
+            # relative improvement stopping
+            denom = max(1.0, abs(prev_val))
+            if abs(prev_val - val) / denom < tol_rel:
+                x = x_new
+                break
+            prev_val = val
+
+        x = x_new
+        x_hist.append(x.copy())
+
+    return x, obj_vals, x_hist
+
+
+
+def ista_newton_oscar(
+    A: np.ndarray,
+    b: np.ndarray,
+    w1: float,
+    w2: float,               # your OSCAR prox (see notes below)
+    x0: np.ndarray,
+    beta =0.9,
+    max_iter: int = 500,
+    step_scale: float = 0.99,
+    tol_rel: float = 1e-6,
+    record_every: int = 1,
+    verbose: bool = False,
+):
+    """
+    Solve  min_x  1/2 ||A x - b||^2 + OSCAR(x; lam1, lam2)
+    via ISTA:  x^{k+1} = prox_{t * OSCAR}( x^k - t * ∇f(x^k) ),  f(x)=1/2||Ax-b||^2
+
+    Parameters
+    ----------
+    prox : one of the following styles
+        (A) factory style:   x_next = prox(strength=(lam1*t, lam2*t)).call(y)
+        (B) direct callable: x_next = prox(y, tau=t, lam1=lam1, lam2=lam2)
+    """
+    A = np.asarray(A)
+    b = np.asarray(b)
+    m, n = A.shape
+
+    if x0 is None:
+        x = np.zeros(n, dtype=float)
+    else:
+        x = np.asarray(x0, dtype=float).copy()
+
+    L = lipschitz_from_spectral_norm(A)
+    if L <= 0:
+        raise ValueError("Nonpositive Lipschitz constant; check matrix A.")
+    t = step_scale / L
+
+    obj_vals = []
+    x_hist = []
+    d_norms = []
+    do_newton = False
+    prev_val = obj_least_squares_plus_oscar(A, b, x, w1, w2)
+    obj_vals.append(prev_val)
+
+    for k in range(1, max_iter + 1):
+        # gradient step
+        g = grad_f(A, x, b)
+        y = x - t * g
+
+        # proximal step (supports both styles A and B)
+
+        x_hat = prox_oscar(y, t, w1, w2, positive=False)
+
+        if do_newton:
+            zk = (x - x_hat) / t - g
+            d = sub_problem1_gurobi(A, x, zk, b, w1, w2, time_limit=5.0, silent=not verbose)
+            print(f"Newton step norm: {np.linalg.norm(d)}")
+            d_norms.append(np.linalg.norm(d))
+            newton_stepsize = 1
+            while obj_least_squares_plus_oscar(A, b, x_hat - newton_stepsize * d, w1, w2) > obj_least_squares_plus_oscar(A, b, x_hat, w1, w2):
+                newton_stepsize *= beta
+            x_new = x_hat - newton_stepsize * d
+            #do_newton = False
+        else:
+            x_new = x_hat
+            d_norms.append(0)
+
+        if np.linalg.norm(x_new - x) < 2e-3: 
+            do_newton = True
+        else:
+            do_newton = False
+
+
+        if k % record_every == 0:
+            val = obj_least_squares_plus_oscar(A, b, x_new, w1, w2)
+            obj_vals.append(val)
+            if verbose:
+                print(f"iter {k:4d}: obj = {val:.6e}")
+
+            # relative improvement stopping
+            denom = max(1.0, abs(prev_val))
+            if abs(prev_val - val) / denom < tol_rel:
+                x = x_new
+                break
+            prev_val = val
+
+        x = x_new
+        x_hist.append(x.copy())
+
+    return x, obj_vals, x_hist, d_norms
+
+
+
+# ---------- (optional) tiny usage example ----------
+if __name__ == "__main__":
+    rng = np.random.default_rng(1)
+    m, n = 200, 500
+    A = rng.standard_normal((m, n))
+    x_true = np.random.standard_normal(n)
+    b = A @ x_true + 0.001 * rng.standard_normal(m)
+    x0 = np.zeros(n)
+    tol = 1e-9
+
+    # w1 = 0.1 * np.linalg.norm(A.T @ b, np.inf)
+    # w2 = w1/np.sqrt(n)  # OSCAR parameters
+    w1 = 0.2
+    w2 = 0.6
+
+    x_hat, obj_vals, x_hist = ista_oscar(
+        A, b, w1, w2, x0=x0, max_iter=300, tol_rel= tol, verbose=True
+    )
+    x_hat2, obj_vals2, x_hist2, d_norms = ista_newton_oscar(
+         A, b, w1, w2, x0=x0, max_iter=300, tol_rel= tol, verbose=True
+    )
+
+    min_val = min(obj_vals + obj_vals2)
+    plt.figure(1)
+    plt.plot(np.array(obj_vals) - min_val, linewidth=2, label='ISTA')
+    plt.plot(np.array(obj_vals2) - min_val, linewidth=2, label='ISTA with Newton')
+    plt.xlabel("Iteration")
+    plt.ylabel(r"Objective $0.5\|Ax-b\|^2 + OSCAR(x)")
+    plt.yscale("log")
+    plt.title("ISTA vs ISTA for OSCAR — Objective vs Iterations")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend()
+    plt.tight_layout()
+
+    plt.figure(2)
+    plt.plot(d_norms, linewidth=2, label='Newton step norm')
+    plt.xlabel("Iteration")
+    plt.ylabel(r"$\|d\|$")
+
+    plt.title("norm of Newton Step Norm vs Iterations")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend()
+    plt.tight_layout()
+
+    # plt.figure(2)
+    # #plt.plot(np.linalg.norm(x_iters - x_gurobi, axis=1), linewidth=2, label='ISTA')
+    # #plt.plot(np.linalg.norm(x_iters2 - x_gurobi, axis=1), linewidth=2, label='ISTA with Newton')
+    # plt.xlabel("Iteration")
+    # plt.ylabel(r"$\|x-x^\ast\|$")
+    # plt.yscale("log")
+    # plt.title("ISTA for Generalized Lasso (TV) — Objective vs Iterations")
+    # plt.grid(True, linestyle="--", alpha=0.5)
+    # plt.legend()
+    # plt.tight_layout()
+    plt.show()

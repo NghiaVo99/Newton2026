@@ -1,0 +1,255 @@
+# Third attempt with even smaller size to fit strict time limits.
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+def sort_abs_desc(v):
+    s = np.abs(v)
+    perm = np.argsort(-s)
+    invperm = np.empty_like(perm)
+    invperm[perm] = np.arange(len(v))
+    return s[perm], perm, invperm, np.sign(v)
+
+def unsort_and_restore(z_sorted, invperm, signs):
+    z = np.empty_like(z_sorted)
+    z[invperm] = z_sorted
+    return signs * z
+
+def proj_monotone_nonincreasing(y):
+    y = y.astype(float).copy()
+    n = y.size
+    v = y.copy()
+    w = np.ones(n)
+    i = 0
+    while i < n - 1:
+        if v[i] >= v[i+1]:
+            i += 1
+        else:
+            j = i
+            while j >= 0 and v[j] < v[j+1]:
+                totw = w[j] + w[j+1]
+                avg = (w[j]*v[j] + w[j+1]*v[j+1]) / totw
+                v[j] = v[j+1] = avg
+                w[j] = w[j+1] = totw
+                if j+1 < n-1:
+                    v[j+1:-1] = v[j+2:]
+                    w[j+1:-1] = w[j+2:]
+                n -= 1
+                v = v[:n]
+                w = w[:n]
+                j -= 1
+            vv = []
+            for val, ww in zip(v, w):
+                vv.extend([val]*int(ww))
+            v = np.array(vv, dtype=float)
+            w = np.ones_like(v)
+            n = v.size
+            i = max(j, 0)
+    return v
+
+def proj_Km_plus(y):
+    z = proj_monotone_nonincreasing(y)
+    return np.maximum(z, 0.0)
+
+def owl_norm(x, w):
+    s = np.sort(np.abs(x))[::-1]
+    return float(np.dot(w, s))
+
+def project_onto_owl_ball(v, w, eps, tol=1e-9, maxit=50):
+    if owl_norm(v, w) <= eps:
+        return v.copy()
+    s_sorted, perm, invperm, signs = sort_abs_desc(v)
+    def g(theta):
+        z = proj_Km_plus(s_sorted - theta*w)
+        return float(np.dot(w, z)) - eps
+    theta_lo = 0.0
+    theta_hi = (s_sorted[0] / (np.mean(w) + 1e-16)) * 2.0
+    val_hi = g(theta_hi)
+    while val_hi > 0 and theta_hi < 1e12:
+        theta_hi *= 2.0
+        val_hi = g(theta_hi)
+    lo, hi = theta_lo, theta_hi
+    for _ in range(maxit):
+        mid = 0.5*(lo+hi)
+        val_mid = g(mid)
+        if abs(val_mid) < tol:
+            theta_star = mid
+            break
+        if val_mid > 0:
+            lo = mid
+        else:
+            hi = mid
+    else:
+        theta_star = 0.5*(lo+hi)
+    z_sorted = proj_Km_plus(s_sorted - theta_star*w)
+    x = unsort_and_restore(z_sorted, invperm, signs)
+    return x
+
+def _pd_factor(Sigma, jitter=1e-12):
+    Sigma = 0.5*(Sigma + Sigma.T) + jitter*np.eye(Sigma.shape[0])
+    try:
+        return np.linalg.cholesky(Sigma)
+    except np.linalg.LinAlgError:
+        w, V = np.linalg.eigh(Sigma)
+        w = np.clip(w, 1e-15, None)
+        L = (V * np.sqrt(w)) @ V.T
+        return 0.5*(L + L.T)
+
+def build_test_problem(n=200, sigma2=0.01, rho=0.7, seed=3):
+    rng = np.random.default_rng(seed)
+    idx = np.arange(n)
+    Sigma = rho ** np.abs(np.subtract.outer(idx, idx))
+    L = _pd_factor(Sigma, jitter=1e-12)
+    Z = rng.standard_normal((n, n))
+    H = Z @ L.T
+    H -= H.mean(axis=0, keepdims=True)
+    H /= (H.std(axis=0, ddof=1, keepdims=True) + 1e-12)
+    x_true = np.zeros(n)
+    x_true[int(0.15*n):int(0.20*n)] =  3.0
+    x_true[int(0.45*n):int(0.50*n)] = -4.0
+    x_true[int(0.70*n):int(0.75*n)] =  6.0
+    y = H @ x_true + np.sqrt(sigma2) * rng.standard_normal(n)
+    return H, y, x_true
+
+def oscar_weights(n, lam1, lam2):
+    i = np.arange(1, n+1)
+    return lam1 + lam2*(n - i)
+
+def objective(H, y, x):
+    r = H @ x - y
+    return 0.5 * float(r @ r)
+
+def fista_fixedL(H, y, w, eps, L, max_iter=200, log_every=1):
+    n = H.shape[1]
+    x = np.zeros(n)
+    u = x.copy()
+    t = 1.0
+    Ht = H.T
+    xs, objs, times = [], [], []
+    t0 = time.perf_counter()
+    for k in range(1, max_iter+1):
+        grad = Ht @ (H @ u - y)
+        z = u - grad / L
+        x_new = project_onto_owl_ball(z, w, eps)
+        t_new = 0.5*(1 + np.sqrt(1 + 4*t*t))
+        u = x_new + ((t-1)/t_new) * (x_new - x)
+        x, t = x_new, t_new
+        if k % log_every == 0:
+            xs.append(x.copy())
+            objs.append(objective(H, y, x))
+            times.append(time.perf_counter() - t0)
+    return {"xs": xs, "objs": np.array(objs), "times": np.array(times)}
+
+def fista_backtracking(H, y, w, eps, alpha0=None, eta=2.0, max_iter=200, log_every=1):
+    n = H.shape[1]
+    x_prev = np.zeros(n)
+    u = x_prev.copy()
+    t = 1.0
+    Ht = H.T
+    if alpha0 is None:
+        z = np.random.randn(n)
+        for _ in range(6):
+            z = Ht @ (H @ z)
+            z /= (np.linalg.norm(z) + 1e-12)
+        L_est = float(z @ (Ht @ (H @ z)))
+        alpha = max(L_est, 1e-6)
+    else:
+        alpha = alpha0
+    def Q_alpha(x, u, alpha):
+        Hu_y = H @ u - y
+        return (np.linalg.norm(Hu_y)**2
+                + 2.0*np.dot((x - u), Ht @ Hu_y)
+                + alpha * 0.5 * np.linalg.norm(x - u)**2)
+    xs, objs, times = [], [], []
+    t0 = time.perf_counter()
+    for k in range(1, max_iter+1):
+        while True:
+            grad = Ht @ (H @ u - y)
+            z = u - grad / alpha
+            x_new = project_onto_owl_ball(z, w, eps)
+            if np.linalg.norm(H @ x_new - y)**2 <= Q_alpha(x_new, u, alpha):
+                break
+            alpha *= eta
+        t_new = 0.5*(1 + np.sqrt(1 + 4*t*t))
+        u = x_new + ((t-1)/t_new) * (x_new - x_prev)
+        if k % log_every == 0:
+            xs.append(x_new.copy())
+            objs.append(objective(H, y, x_new))
+            times.append(time.perf_counter() - t0)
+        x_prev, t = x_new, t_new
+    return {"xs": xs, "objs": np.array(objs), "times": np.array(times)}
+
+# Run
+n = 500
+H, y, x_true = build_test_problem(n=n, sigma2=0.01, rho=0.7, seed=4)
+lam1, lam2, eps = 1e-6, 2e-6, 1.0
+w = oscar_weights(n, lam1, lam2)
+S = H.T @ H
+L = np.linalg.norm(S, 2)
+max_iter = 180
+
+log_fixed = fista_fixedL(H, y, w, eps, L=L, max_iter=max_iter)
+log_bt    = fista_backtracking(H, y, w, eps, alpha0=L, eta=2.0, max_iter=max_iter)
+
+all_objs = np.concatenate([log_fixed["objs"], log_bt["objs"]])
+f_star = float(all_objs.min())
+if log_fixed["objs"].min() <= log_bt["objs"].min():
+    idx = int(np.argmin(log_fixed["objs"]))
+    x_star = log_fixed["xs"][idx]
+else:
+    idx = int(np.argmin(log_bt["objs"]))
+    x_star = log_bt["xs"][idx]
+
+def build_metrics(log, name):
+    gaps = log["objs"] - f_star
+    errx = np.array([np.linalg.norm(x - x_star) for x in log["xs"]])
+    iters = np.arange(1, len(gaps)+1)
+    return pd.DataFrame({
+        "method": name,
+        "iter": iters,
+        "time_sec": log["times"],
+        "f": log["objs"],
+        "f_gap": gaps,
+        "x_err": errx
+    })
+
+df_fixed = build_metrics(log_fixed, "FISTA (fixed L)")
+df_bt    = build_metrics(log_bt,    "FISTA (backtracking)")
+df_all = pd.concat([df_fixed, df_bt], ignore_index=True)
+
+# df_all.to_csv("/mnt/data/fista_metrics_both_small.csv", index=False)
+
+def plot_metric_vs_iter(df, metric, ylabel, title, fname):
+    plt.figure()
+    for method in df["method"].unique():
+        sub = df[df["method"] == method]
+        plt.plot(sub["iter"].values, sub[metric].values, label=method)
+    plt.yscale("log")
+    plt.xlabel("Iteration")
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    #plt.savefig(fname)
+    plt.show()
+
+def plot_metric_vs_time(df, metric, ylabel, title, fname):
+    plt.figure()
+    for method in df["method"].unique():
+        sub = df[df["method"] == method]
+        plt.plot(sub["time_sec"].values, sub[metric].values, label=method)
+    plt.yscale("log")
+    plt.xlabel("Time (s)")
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    #plt.savefig(fname)
+    plt.show()
+
+plot_metric_vs_iter(df_all, "f_gap", r"$f_k - f^\star$", "Objective gap vs Iteration", "/mnt/data/obj_gap_vs_iter_small.png")
+plot_metric_vs_time(df_all, "f_gap", r"$f_k - f^\star$", "Objective gap vs Time", "/mnt/data/obj_gap_vs_time_small.png")
+plot_metric_vs_iter(df_all, "x_err", r"$\|x_k - x^\star\|_2$", "Iterate error vs Iteration", "/mnt/data/xerr_vs_iter_small.png")
+plot_metric_vs_time(df_all, "x_err", r"$\|x_k - x^\star\|_2$", "Iterate error vs Time", "/mnt/data/xerr_vs_time_small.png")
+

@@ -1,7 +1,16 @@
 import numpy as np
-import gurobipy as gp
-from gurobipy import GRB
-import cvxpy as cp
+
+try:
+  import gurobipy as gp
+  from gurobipy import GRB
+except ImportError:  # pragma: no cover - optional solver dependency.
+  gp = None
+  GRB = None
+
+try:
+  import cvxpy as cp
+except ImportError:  # pragma: no cover - optional solver dependency.
+  cp = None
 
 def grad_f(A,x,b):
   return A.T@(A@x-b)
@@ -39,6 +48,9 @@ def solve_generalized_lasso_gurobi(A, b, lam: float, D,
     Objective:
       0.5 * r^T r + lam * 1^T t
     """
+    if gp is None:
+        raise ImportError("gurobipy is required for solve_generalized_lasso_gurobi.")
+
     # --- coerce to dense numpy (gurobi works great with numpy arrays) ---
     if hasattr(A, "toarray"): A = A.toarray()
     if hasattr(D, "toarray"): D = D.toarray()
@@ -87,19 +99,30 @@ def solve_generalized_lasso_gurobi(A, b, lam: float, D,
         return np.zeros(n, dtype=float)
 
 
+def inactive_tv_constraint_indices(zk, alpha, n, tol=1e-4):
+    zk_vec = np.asarray(zk, float).reshape(-1)
+    if zk_vec.size < n:
+        raise ValueError(f"zk length {zk_vec.size} < n={n}.")
+    inactive_radius = max(float(alpha), 1e-12) * (1 - float(tol))
+    s = np.cumsum(zk_vec[:n-1])
+    return np.where(np.abs(s) < inactive_radius)[0]
+
+
 def sub_problem_gen_lasso(A, yk, zk, b, alpha, time_limit=4.0, silent=True):
     """
-    Gurobi port of your CVXPY subproblem:
-        minimize  0.5 * ||Q d||^2 - (g + z_k)^T d
-        subject to d[i] == d[i+1]  for i with |sum_{j=1}^i y_k[j]| <= 1 - 1e-4
-    where Q = hessian_f(A) in your code (be sure what Q represents; see note above).
+    Newton subproblem on the active manifold:
+        minimize 0.5 * d.T @ (A.T @ A) @ d - (grad_f(yk) + zk).T @ d
+        subject to d[i] == d[i+1] for inactive TV dual constraints.
     """
+    if gp is None:
+        raise ImportError("gurobipy is required for sub_problem_gen_lasso.")
+
     # Inputs and shapes
     Q = np.asarray(hessian_f(A), dtype=float)  # (n,n)
     g  = np.asarray(grad_f(A, yk, b), dtype=float)  # (n,)
     zk = np.asarray(zk, dtype=float)
 
-    # Infer n and build H = Q^T Q to match 0.5*||Q d||^2
+    # Infer n for the Hessian A.T @ A.
     if Q.ndim != 2:
         raise ValueError("Q must be a 2D array.")
     n = Q.shape[1]
@@ -110,12 +133,13 @@ def sub_problem_gen_lasso(A, yk, zk, b, alpha, time_limit=4.0, silent=True):
     
     c = g + zk
 
-    # Prefix-sum "parallel-space" constraints (TV case)
+    # Prefix-sum "parallel-space" constraints (TV case).  The TV dual
+    # variable is scaled by alpha, so inactive constraints satisfy
+    # |cumsum(zk) / alpha| < 1.
     zk_vec = np.asarray(zk, float).reshape(-1)
     if zk_vec.size < n:
         raise ValueError(f"zk length {zk_vec.size} < n={n}.")
-    s = np.cumsum(zk_vec[:n-1])     # length n-1
-    idx = np.where(np.abs(s) < 1 - 1e-4)[0]  # indices i where d[i]==d[i+1]
+    idx = inactive_tv_constraint_indices(zk_vec, alpha, n)  # d[i]==d[i+1]
 
     # Build model
     m = gp.Model("sub_problem1")
@@ -141,7 +165,10 @@ def sub_problem_gen_lasso(A, yk, zk, b, alpha, time_limit=4.0, silent=True):
     if m.Status == GRB.OPTIMAL:
         return d.X
     elif m.Status == GRB.TIME_LIMIT:
-        print("Gurobi reached time limit, returning partial solution (zeros).")
+        if m.SolCount > 0:
+            print("Gurobi reached time limit, returning incumbent solution.")
+            return d.X
+        print("Gurobi reached time limit without incumbent; returning zeros.")
         return np.zeros(n, dtype=float)
     else:
         print(f"Gurobi status: {m.Status}. Returning zeros.")
@@ -196,5 +223,3 @@ def build_test_problem(n=200, sigma2=0.01, rho=0.7, seed=3):
     x_true[int(0.70*n):int(0.75*n)] =  6.0
     y = H @ x_true + np.sqrt(sigma2) * rng.standard_normal(n)
     return H, y, x_true
-
-

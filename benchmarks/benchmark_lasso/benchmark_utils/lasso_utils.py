@@ -16,10 +16,11 @@ from src.lasso.newton_lasso import Algo_Newton_Ista
 from src.lasso.newton_lasso import FISTA1
 from src.lasso.newton_lasso import ISTA
 from src.lasso.utils_lasso import cost_lasso
+from src.lasso.utils_lasso import dense_lasso_newton_subproblem
 from src.lasso.utils_lasso import grad_f
+from src.lasso.utils_lasso import lasso_newton_subproblem as _shared_lasso_newton_subproblem
 from src.lasso.utils_lasso import lipschitz_exact
 from src.lasso.utils_lasso import proxL1
-from src.lasso.utils_lasso import sub_problem_of_lasso
 
 
 DEFAULT_BT_BETA = 0.5
@@ -33,29 +34,6 @@ DEFAULT_ISTA_NEWTON_TOL = 1e-2
 DEFAULT_FISTA_NEWTON_TOL = 1e-2
 NO_EARLY_STOP_TOL = -1.0
 USE_GUROBI_NEWTON_SUBPROBLEM = False
-
-_DENSE_NEWTON_CACHE = {}
-
-
-def _dense_cache_key(A, b):
-    A_arr = np.asarray(A)
-    b_arr = np.asarray(b).reshape(-1)
-    return (id(A), id(b), A_arr.shape, b_arr.shape, A_arr.dtype.str, b_arr.dtype.str)
-
-
-def _get_dense_newton_cache(A, b):
-    key = _dense_cache_key(A, b)
-    cache = _DENSE_NEWTON_CACHE.get(key)
-    if cache is not None:
-        return cache
-
-    A_arr = np.asarray(A, dtype=float)
-    b_arr = np.asarray(b, dtype=float).reshape(-1)
-    gram = np.asarray(A_arr.T @ A_arr, dtype=float)
-    atb = np.asarray(A_arr.T @ b_arr, dtype=float)
-    cache = {"gram": gram, "atb": atb}
-    _DENSE_NEWTON_CACHE[key] = cache
-    return cache
 
 
 def soft_threshold(x, lam):
@@ -73,51 +51,10 @@ def compute_step_size(X):
     return 1.0 / max(lipschitz_exact(X), 1e-12)
 
 
-def dense_lasso_newton_subproblem(A, x, y, b, alpha):
-    """Solve the reduced Newton subproblem with dense NumPy linear algebra."""
-    cache = _get_dense_newton_cache(A, b)
-    gram = cache["gram"]
-    atb = cache["atb"]
-
-    x = np.asarray(x, dtype=float).reshape(-1)
-    y = np.asarray(y, dtype=float).reshape(-1)
-    kappa = np.where(np.abs(y) >= 0.999 * alpha)[0]
-    d_full = np.zeros_like(y, dtype=float)
-    if kappa.size == 0:
-        return d_full
-
-    Q = gram[np.ix_(kappa, kappa)]
-    rhs_full = gram @ x - atb + y
-    rhs = rhs_full[kappa]
-
-    try:
-        d_reduced = np.linalg.solve(Q, rhs)
-    except np.linalg.LinAlgError:
-        d_reduced = np.linalg.lstsq(Q, rhs, rcond=None)[0]
-
-    d_full[kappa] = d_reduced
-    return d_full
-
-
 def lasso_newton_subproblem(A, x, y, b, alpha):
-    """Fast cached dense subproblem by default, optional Gurobi fallback."""
-    d = None
-    if USE_GUROBI_NEWTON_SUBPROBLEM:
-        try:
-            d = sub_problem_of_lasso(A, x, y, b, alpha)
-        except Exception:
-            d = None
-
-    if d is None:
-        d = dense_lasso_newton_subproblem(A, x, y, b, alpha)
-
-    d = np.asarray(d, dtype=float)
-    if not np.all(np.isfinite(d)):
-        d = dense_lasso_newton_subproblem(A, x, y, b, alpha)
-        d = np.asarray(d, dtype=float)
-    if not np.all(np.isfinite(d)):
-        return np.zeros_like(np.asarray(y, dtype=float))
-    return d
+    return _shared_lasso_newton_subproblem(
+        A, x, y, b, alpha, use_gurobi=USE_GUROBI_NEWTON_SUBPROBLEM
+    )
 
 
 def _run_without_stdout(func, *args, **kwargs):
@@ -227,8 +164,7 @@ def run_newton_bt_ista(X, y, lmbd, n_iter):
     X = np.asarray(X, dtype=float)
     y = np.asarray(y, dtype=float).reshape(-1)
     x0 = np.zeros(X.shape[1], dtype=float)
-    _, beta, _, _, _ = _run_without_stdout(
-        Algo_Newton_BT_Ista,
+    _, beta, _, _, _ = Algo_Newton_BT_Ista(
         X,
         y,
         x0,
@@ -243,6 +179,7 @@ def run_newton_bt_ista(X, y, lmbd, n_iter):
         DEFAULT_ISTA_NEWTON_TOL,
         0,
         DEFAULT_NEWTON_TRIGGER_STEPS,
+        verbose=False,
     )
     return np.asarray(beta, dtype=float)
 
@@ -252,8 +189,7 @@ def run_newton_ista(X, y, lmbd, n_iter):
     y = np.asarray(y, dtype=float).reshape(-1)
     x0 = np.zeros(X.shape[1], dtype=float)
     step_size = compute_step_size(X)
-    _, beta, _, _, _ = _run_without_stdout(
-        Algo_Newton_Ista,
+    _, beta, _, _, _ = Algo_Newton_Ista(
         X,
         y,
         x0,
@@ -269,6 +205,7 @@ def run_newton_ista(X, y, lmbd, n_iter):
         DEFAULT_ISTA_NEWTON_TOL,
         0,
         DEFAULT_NEWTON_TRIGGER_STEPS,
+        verbose=False,
     )
     return np.asarray(beta, dtype=float)
 
@@ -277,8 +214,7 @@ def run_newton_bt_fista(X, y, lmbd, n_iter):
     X = np.asarray(X, dtype=float)
     y = np.asarray(y, dtype=float).reshape(-1)
     x0 = np.zeros(X.shape[1], dtype=float)
-    _, beta, _, _, _ = _run_without_stdout(
-        Algo_Newton_BT_Fista_new,
+    _, beta, _, _, _ = Algo_Newton_BT_Fista_new(
         X,
         y,
         x0,
@@ -293,6 +229,7 @@ def run_newton_bt_fista(X, y, lmbd, n_iter):
         DEFAULT_FISTA_NEWTON_TOL,
         0,
         DEFAULT_NEWTON_TRIGGER_STEPS,
+        verbose=False,
     )
     return np.asarray(beta, dtype=float)
 
@@ -302,8 +239,7 @@ def run_newton_fista(X, y, lmbd, n_iter):
     y = np.asarray(y, dtype=float).reshape(-1)
     x0 = np.zeros(X.shape[1], dtype=float)
     step_size = compute_step_size(X)
-    _, beta, _, _, _ = _run_without_stdout(
-        Algo_Newton_Fista_new,
+    _, beta, _, _, _ = Algo_Newton_Fista_new(
         X,
         y,
         x0,
@@ -319,5 +255,6 @@ def run_newton_fista(X, y, lmbd, n_iter):
         DEFAULT_FISTA_NEWTON_TOL,
         0,
         DEFAULT_NEWTON_TRIGGER_STEPS,
+        verbose=False,
     )
     return np.asarray(beta, dtype=float)

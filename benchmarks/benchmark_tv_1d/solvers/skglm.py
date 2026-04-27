@@ -1,0 +1,82 @@
+import pathlib
+import sys
+import warnings
+
+from benchopt import BaseSolver
+from benchopt import safe_import_context
+from benchopt.stopping_criterion import SufficientProgressCriterion
+
+BENCHMARK_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(BENCHMARK_DIR) not in sys.path:
+    sys.path.insert(0, str(BENCHMARK_DIR))
+
+with safe_import_context() as import_ctx:
+    import numpy as np
+    from sklearn.exceptions import ConvergenceWarning
+    from skglm import GeneralizedLinearEstimator
+    from skglm.datafits import Huber
+    from skglm.datafits import Quadratic
+    from skglm.penalties import WeightedL1
+    from skglm.solvers import AndersonCD
+
+
+class Solver(BaseSolver):
+    """Coordinate descent for synthesis formulation."""
+
+    name = "skglm synthesis"
+    stopping_criterion = SufficientProgressCriterion(patience=3, strategy="iteration")
+    install_cmd = "conda"
+    requirements = ["pip:git+https://github.com/scikit-learn-contrib/skglm.git"]
+    references = [
+        "M. Massias, P. Bannier, Q. Klopfenstein and Q. Bertrand. "
+        '"skglm: Fast and modular Generalized Linear Models with support for '
+        'models missing in scikit-learn."'
+    ]
+
+    def set_objective(self, A, reg, y, c, delta, data_fit):
+        self.reg = reg
+        self.A = A
+        self.y = y
+        self.c = c
+        self.delta = delta
+        self.data_fit = data_fit
+
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
+        weights = np.ones(self.A.shape[1])
+        weights[0] = 0
+
+        solver = AndersonCD(
+            max_iter=1,
+            max_epochs=100_00,
+            tol=1e-12,
+            fit_intercept=False,
+            warm_start=False,
+            verbose=False,
+        )
+
+        if data_fit == "quad":
+            datafit = Quadratic()
+        else:
+            datafit = Huber(self.delta)
+        self.clf = GeneralizedLinearEstimator(
+            datafit,
+            WeightedL1(self.reg / self.A.shape[0], weights),
+            solver,
+        )
+        self.run(2)
+
+    def run(self, n_iter):
+        p = self.A.shape[1]
+        L = np.tri(p)
+        AL = self.A @ L
+        self.clf.solver.max_iter = n_iter
+        self.clf.fit(AL, self.y)
+        z = self.clf.coef_.flatten()
+        self.u = np.cumsum(z)
+
+    @staticmethod
+    def get_next(previous):
+        return previous + 1
+
+    def get_result(self):
+        return dict(u=self.u)

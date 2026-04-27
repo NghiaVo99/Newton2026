@@ -17,10 +17,10 @@ from src.Gen_lasso.test_prob_gpt import generate_gen_lasso_toy
 # ────────────────────────────────────────────────────────────
 # Problem setup
 # ────────────────────────────────────────────────────────────
-m, n = 20, 90
-rng = np.random.default_rng(10)
+m, n = 10, 100
+rng = np.random.default_rng(50)
 D = make_forward_diff(n)
-data = generate_gen_lasso_toy(n=n, m=m, alpha=0.15, snr_db=25.0, seed=42)
+data = generate_gen_lasso_toy(n=n, m=m, alpha=0.1, snr_db=25.0, seed=42)
 A, b_new, z, alpha = data["A"], data["b"], data["x_true"], data["alpha"]
 
 # z = rng.standard_normal(n)
@@ -30,16 +30,20 @@ A, b_new, z, alpha = data["A"], data["b"], data["x_true"], data["alpha"]
 step_size = 1.0 / (np.linalg.norm(A, 2) ** 2)
 beta, newton_stepsize = 0.5, 1.0
 tol = 1e-8
-newt_tol = 1e-4
+newt_tol = 1e-2
 
-alpha_c = 0.03 #1/np.linalg.norm(A.T @ b_new, np.inf)
+alpha_c = 0.5 * 1/np.linalg.norm(A.T @ b_new, np.inf)
 print('alpha_c', alpha_c)
 alpha = alpha_c * np.linalg.norm(A.T @ b_new, np.inf)
 #print('alpha', alpha)
 max_iter = 1000
 x0 = np.zeros(n)
 
-prox = pyproximal.TV(dims = (n,)).prox
+# The pyproximal.TV defaults (niter=10, rtol=1e-4) are too loose for
+# comparing iterates against a high-accuracy Gurobi reference.
+tv_prox_niter = 300
+tv_prox_rtol = 1e-10
+prox = pyproximal.TV(dims=(n,), niter=tv_prox_niter, rtol=tv_prox_rtol).prox
 #prox = ProxTV
 subproblem_solver = sub_problem_gen_lasso
 #subproblem_solver = sub_problem_gen_lasso_cvxpy
@@ -79,6 +83,7 @@ cost_val_newton_bt_fista, x6, i6, x_k6, time_k6 = Algo_Newton_BT_Fista_new(
 
 # Use the *noisy* problem for the optimal cost reference
 optimal_cost = cost_generalized_lasso(A, approx_sol, b_new, alpha, D=D)
+gap_floor = 1e-16
 # ────────────────────────────────────────────────────────────
 # Series registry (add/remove methods here)
 # ────────────────────────────────────────────────────────────
@@ -107,18 +112,18 @@ series = [
         "dists": np.asarray(x_k4),
         "times": np.asarray(time_k4),
     },
-    {
-        "name": "Newton_BT_ISTA", "color": "c", "marker": "<",
-        "costs": np.asarray(cost_val_newton_bt_ista),
-        "dists": np.asarray(x_k5),
-        "times": np.asarray(time_k5),
-    },
-    {
-        "name": "Newton_BT_FISTA", "color": "y", "marker": "P",
-        "costs": np.asarray(cost_val_newton_bt_fista),
-        "dists": np.asarray(x_k6),
-        "times": np.asarray(time_k6),
-    },
+    # {
+    #     "name": "Newton_BT_ISTA", "color": "c", "marker": "<",
+    #     "costs": np.asarray(cost_val_newton_bt_ista),
+    #     "dists": np.asarray(x_k5),
+    #     "times": np.asarray(time_k5),
+    # },
+    # {
+    #     "name": "Newton_BT_FISTA", "color": "y", "marker": "P",
+    #     "costs": np.asarray(cost_val_newton_bt_fista),
+    #     "dists": np.asarray(x_k6),
+    #     "times": np.asarray(time_k6),
+    # },
     # {
     #     "name": "Fast-ADMM-R", "color": "pink", "marker": "h",
     #     "costs": np.asarray(cost_val_fastADMM),
@@ -126,6 +131,12 @@ series = [
     #     "times": np.asarray(time_k7),
     # }
 ]
+
+print("\nFinal objective gaps:")
+for s in series:
+    final_gap = abs(float(s["costs"][-1] - optimal_cost))
+    final_dist = float(s["dists"][-1])
+    print(f"{s['name']}: gap={final_gap:.3e}, dist={final_dist:.3e}")
 
 # ────────────────────────────────────────────────────────────
 # Figure: 2-row layout (bottom row only for legend)
@@ -151,7 +162,7 @@ mark_every_time = 30
 for s in series:
     # (a) objective gap vs iterations
     axs[0].plot(
-        s["costs"] - optimal_cost,
+        np.maximum(np.abs(s["costs"] - optimal_cost), gap_floor),
         color=s["color"], linestyle='-', linewidth=linewidth,
         marker=s["marker"], markevery=mark_every_cost, markersize=6,
         label=s["name"]
@@ -191,7 +202,7 @@ colors_sorted  = [colors[i] for i in order]
 axs[2].bar(methods_sorted, times_sorted, color=colors_sorted)
 axs[2].set_yscale('log')
 axs[2].set_ylabel("log(Runtime)")       
-axs[2].set_xticks("")   
+axs[2].tick_params(axis='x', labelrotation=30)
     
 
 

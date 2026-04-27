@@ -248,6 +248,85 @@ def sub_problem_of_lasso(A, x, y, b, alpha):
     return d_full
 
 
+_DENSE_NEWTON_CACHE = {}
+
+
+def _dense_newton_cache_key(A, b):
+    if sparse.issparse(A):
+        shape = A.shape
+        dtype = A.dtype.str
+    else:
+        A_arr = np.asarray(A)
+        shape = A_arr.shape
+        dtype = A_arr.dtype.str
+    b_arr = np.asarray(b).reshape(-1)
+    return (id(A), id(b), shape, b_arr.shape, dtype, b_arr.dtype.str)
+
+
+def _get_dense_newton_cache(A, b):
+    key = _dense_newton_cache_key(A, b)
+    cache = _DENSE_NEWTON_CACHE.get(key)
+    if cache is not None:
+        return cache
+
+    if sparse.issparse(A):
+        A_arr = A.toarray().astype(float, copy=False)
+    else:
+        A_arr = np.asarray(A, dtype=float)
+    b_arr = np.asarray(b, dtype=float).reshape(-1)
+    cache = {
+        "gram": np.asarray(A_arr.T @ A_arr, dtype=float),
+        "atb": np.asarray(A_arr.T @ b_arr, dtype=float),
+    }
+    _DENSE_NEWTON_CACHE[key] = cache
+    return cache
+
+
+def dense_lasso_newton_subproblem(A, x, y, b, alpha):
+    """Solve the reduced Lasso Newton subproblem with cached dense algebra."""
+    cache = _get_dense_newton_cache(A, b)
+    gram = cache["gram"]
+    atb = cache["atb"]
+
+    x = np.asarray(x, dtype=float).reshape(-1)
+    y = np.asarray(y, dtype=float).reshape(-1)
+    kappa = np.where(np.abs(y) >= 0.999 * alpha)[0]
+    d_full = np.zeros_like(y, dtype=float)
+    if kappa.size == 0:
+        return d_full
+
+    Q = gram[np.ix_(kappa, kappa)]
+    rhs = (gram @ x - atb + y)[kappa]
+    try:
+        d_reduced = np.linalg.solve(Q, rhs)
+    except np.linalg.LinAlgError:
+        d_reduced = np.linalg.lstsq(Q, rhs, rcond=None)[0]
+
+    d_full[kappa] = d_reduced
+    return d_full
+
+
+def lasso_newton_subproblem(A, x, y, b, alpha, use_gurobi=False):
+    """Fast cached Newton subproblem, with optional Gurobi fallback."""
+    d = None
+    if use_gurobi:
+        try:
+            d = sub_problem_of_lasso(A, x, y, b, alpha)
+        except Exception:
+            d = None
+
+    if d is None:
+        d = dense_lasso_newton_subproblem(A, x, y, b, alpha)
+
+    d = np.asarray(d, dtype=float)
+    if not np.all(np.isfinite(d)):
+        d = dense_lasso_newton_subproblem(A, x, y, b, alpha)
+        d = np.asarray(d, dtype=float)
+    if not np.all(np.isfinite(d)):
+        return np.zeros_like(np.asarray(y, dtype=float))
+    return d
+
+
 
 import numpy as np
 
@@ -372,4 +451,3 @@ def lipschitz_exact(A_tilde):
     # Dense fallback (or if no SciPy): this *requires* A_tilde to be a NumPy array
     sigma_max = np.linalg.norm(np.asarray(A_tilde), 2)
     return float(sigma_max**2)
-

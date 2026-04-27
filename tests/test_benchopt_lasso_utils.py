@@ -33,10 +33,27 @@ class BenchoptLassoUtilsTest(unittest.TestCase):
         self.n_iter = 5
         self.no_early_stop_tol = -1.0
 
-    def _run_direct(self, func, *args):
+    def _run_direct(self, func, *args, **kwargs):
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
-            return func(*args)
+            return func(*args, **kwargs)
+
+    def _manual_dense_subproblem(self, x, y):
+        gram = self.X.T @ self.X
+        atb = self.X.T @ self.y
+        kappa = np.where(np.abs(y) >= 0.999 * self.lmbd)[0]
+        d_full = np.zeros_like(y, dtype=float)
+        if kappa.size == 0:
+            return d_full
+
+        Q = gram[np.ix_(kappa, kappa)]
+        rhs = (gram @ x - atb + y)[kappa]
+        try:
+            d_reduced = np.linalg.solve(Q, rhs)
+        except np.linalg.LinAlgError:
+            d_reduced = np.linalg.lstsq(Q, rhs, rcond=None)[0]
+        d_full[kappa] = d_reduced
+        return d_full
 
     def test_newton_bt_ista_runner_matches_direct_call(self):
         _, beta_direct, _, _, _ = self._run_direct(
@@ -119,6 +136,89 @@ class BenchoptLassoUtilsTest(unittest.TestCase):
         )
         beta_runner = run_newton_fista(self.X, self.y, self.lmbd, self.n_iter)
         np.testing.assert_allclose(beta_runner, beta_direct)
+
+    def test_verbose_false_matches_verbose_true_for_newton_variants(self):
+        _, beta_verbose, _, _, _ = self._run_direct(
+            Algo_Newton_Ista,
+            self.X,
+            self.y,
+            self.x0,
+            self.lmbd,
+            self.n_iter,
+            self.step_size,
+            DEFAULT_BT_BETA,
+            DEFAULT_NEWTON_STEP,
+            self.no_early_stop_tol,
+            cost_lasso,
+            proxL1,
+            dense_lasso_newton_subproblem,
+            DEFAULT_ISTA_NEWTON_TOL,
+            0,
+        )
+        _, beta_quiet, _, _, _ = Algo_Newton_Ista(
+            self.X,
+            self.y,
+            self.x0,
+            self.lmbd,
+            self.n_iter,
+            self.step_size,
+            DEFAULT_BT_BETA,
+            DEFAULT_NEWTON_STEP,
+            self.no_early_stop_tol,
+            cost_lasso,
+            proxL1,
+            dense_lasso_newton_subproblem,
+            DEFAULT_ISTA_NEWTON_TOL,
+            0,
+            verbose=False,
+        )
+        np.testing.assert_allclose(beta_quiet, beta_verbose)
+
+        _, beta_verbose, _, _, _ = self._run_direct(
+            Algo_Newton_Fista_new,
+            self.X,
+            self.y,
+            self.x0,
+            self.lmbd,
+            self.n_iter,
+            self.step_size,
+            DEFAULT_BT_BETA,
+            DEFAULT_NEWTON_STEP,
+            self.no_early_stop_tol,
+            cost_lasso,
+            proxL1,
+            dense_lasso_newton_subproblem,
+            DEFAULT_FISTA_NEWTON_TOL,
+            0,
+        )
+        _, beta_quiet, _, _, _ = Algo_Newton_Fista_new(
+            self.X,
+            self.y,
+            self.x0,
+            self.lmbd,
+            self.n_iter,
+            self.step_size,
+            DEFAULT_BT_BETA,
+            DEFAULT_NEWTON_STEP,
+            self.no_early_stop_tol,
+            cost_lasso,
+            proxL1,
+            dense_lasso_newton_subproblem,
+            DEFAULT_FISTA_NEWTON_TOL,
+            0,
+            verbose=False,
+        )
+        np.testing.assert_allclose(beta_quiet, beta_verbose)
+
+    def test_dense_lasso_newton_subproblem_matches_manual_cached_formula(self):
+        x = np.linspace(-0.3, 0.4, self.X.shape[1])
+        y = self.X.T @ (self.X @ x - self.y)
+        y[:5] = np.sign(y[:5]) * max(2.0 * self.lmbd, 1e-8)
+
+        actual = dense_lasso_newton_subproblem(self.X, x, y, self.y, self.lmbd)
+        expected = self._manual_dense_subproblem(x, y)
+
+        np.testing.assert_allclose(actual, expected)
 
 
 if __name__ == "__main__":

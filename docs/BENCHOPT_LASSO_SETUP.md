@@ -49,6 +49,18 @@ pip install sortedl1
 pip install skglm
 ```
 
+## TV-1D benchmark extras
+
+For `benchmarks/benchmark_tv_1d`, install:
+
+```bash
+pip install celer
+pip install git+https://github.com/scikit-learn-contrib/skglm.git
+```
+
+`prox-tv` is optional. If it is unavailable, the benchmark uses the local
+Condat TV-1D prox implementation for analysis PGD and the Newton solvers.
+
 ## Run commands
 
 From the repo root:
@@ -94,4 +106,19 @@ benchopt run benchmarks/benchmark_oscar \
   -o "OSCAR Regression[w1=1e-3,w2=1e-4,fit_intercept=False]" \
   -s ADMM -s PGD -s skglm -s sortedl1 -s Newt-ALM \
   -s newton_ista -s newton_fista -s newton_bt_ista -s newton_bt_fista
+```
+
+## TV-1D benchmark run
+
+```bash
+benchopt test benchmarks/benchmark_tv_1d
+```
+
+```bash
+benchopt run benchmarks/benchmark_tv_1d \
+  -d "Simulated[n_samples=500,n_features=600,type_A=random,type_x=block,type_n=gaussian]" \
+  -o "TV1D[data_fit=quad,delta=0,reg=0.5]" \
+  -s "ADMM analysis" -s "Celer synthesis" -s "CondatVu analysis" \
+  -s "Primal PGD analysis" -s "Primal PGD synthesis" -s "skglm synthesis" \
+  -s newton_ista -s newton_fista
 ```

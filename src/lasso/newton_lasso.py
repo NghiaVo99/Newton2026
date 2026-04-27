@@ -3,6 +3,52 @@ import time
 from src.lasso.utils_lasso import *
 #from ultils_TV import *
 
+
+def _accept_damped_newton_step(
+    A,
+    b,
+    alpha,
+    cost,
+    x_hat,
+    d,
+    beta,
+    newton_stepsize,
+    max_backtracks=25,
+    min_step=1e-12,
+):
+  """Try a damped Newton correction.
+
+  Returns
+  -------
+  x_new : np.ndarray
+      Accepted iterate, or x_hat if no acceptable damped step is found.
+  accepted : bool
+      True iff a damped Newton correction was accepted.
+  """
+  if not np.all(np.isfinite(d)):
+    return x_hat, False
+
+  step = float(newton_stepsize)
+  shrink = float(beta)
+  cost_hat = cost(A, x_hat, b, alpha)
+  if not np.isfinite(cost_hat):
+    return x_hat, False
+
+  for _ in range(int(max_backtracks)):
+    if step <= float(min_step):
+      break
+    x_trial = x_hat - step * d
+    if not np.all(np.isfinite(x_trial)):
+      step *= shrink
+      continue
+
+    cost_trial = cost(A, x_trial, b, alpha)
+    if np.isfinite(cost_trial) and (cost_trial < cost_hat):
+      return x_trial, True
+    step *= shrink
+
+  return x_hat, False
+
 # -------------------------------- ISTA --------------------------------------
 
 def ISTA(A,b,x0,alpha,max_iter, step_size, tol, cost, prox, approx_sol = 0):
@@ -165,7 +211,9 @@ def BT_FISTA1(A, b, x0, alpha, max_iter, tol, cost, prox, approx_sol = 0):
 # ----------------------------- Algo_Newton_Ista -----------------------------
 
 def Algo_Newton_Ista(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, tol, cost,
-                     prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0):
+                     prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
+                     newton_trigger_steps=3, newton_reject_streak_trigger=2,
+                     newton_reject_cooldown=8, max_newton_backtracks=25):
   x = x0.copy()
   AT = A.T
 
@@ -178,6 +226,9 @@ def Algo_Newton_Ista(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, to
   x_k[0] = np.linalg.norm(x-approx_sol)
   start_time = time.time()
   do_newton = 0
+  close_count = 0
+  reject_streak = 0
+  newton_cooldown = 0
 
   r = A @ x - b
   grad = AT @ r
@@ -185,14 +236,23 @@ def Algo_Newton_Ista(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, to
   for i in range(max_iter):
     x_hat = prox(x - step_size*grad, step_size*alpha)
 
+    attempted_newton = False
     if do_newton:
+      attempted_newton = True
       Gradient_map = (x-x_hat)/step_size
       y = Gradient_map - grad
       d = subproblem_solver(A,x_hat,y,b, alpha)
-      newton_stepsize = 1
-      x_new = x_hat - newton_stepsize*d
-      if cost(A,x_new,b,alpha) >= cost(A,x_hat,b,alpha):
-         x_new = x_hat
+      x_new, accepted_newton = _accept_damped_newton_step(
+          A, b, alpha, cost, x_hat, d, beta, newton_stepsize,
+          max_backtracks=max_newton_backtracks
+      )
+      if accepted_newton:
+        reject_streak = 0
+      else:
+        reject_streak += 1
+        if reject_streak >= int(newton_reject_streak_trigger):
+          newton_cooldown = int(newton_reject_cooldown)
+          reject_streak = 0
     else:
       x_new = x_hat
 
@@ -201,10 +261,22 @@ def Algo_Newton_Ista(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, to
     cost_val[i+1] = cost(A,x_new,b,alpha)
     print('Iteration:', i, 'Cost:', cost_val[i+1])
 
-    if np.linalg.norm(x_new - x) < newt_tol: 
-       do_newton = True
+    if attempted_newton:
+      # Cooldown: after one Newton step, re-arm only after consecutive close
+      # proximal iterations again.
+      do_newton = False
+      close_count = 0
     else:
-       do_newton = False
+      if newton_cooldown > 0:
+        newton_cooldown -= 1
+        close_count = 0
+      else:
+        if np.linalg.norm(x_new - x) < newt_tol:
+          close_count += 1
+        else:
+          close_count = 0
+        if close_count >= int(newton_trigger_steps):
+          do_newton = True
 
     x = x_new
     r = A @ x_new - b
@@ -221,7 +293,9 @@ def Algo_Newton_Ista(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, to
 # --------------------------- Algo_Newton_BT_Ista ----------------------------
 
 def Algo_Newton_BT_Ista(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cost,
-                        prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0):
+                        prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
+                        newton_trigger_steps=3, newton_reject_streak_trigger=2,
+                        newton_reject_cooldown=8, max_newton_backtracks=25):
   x = x0.copy()
   AT = A.T
 
@@ -234,6 +308,9 @@ def Algo_Newton_BT_Ista(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cost,
   x_k[0] = np.linalg.norm(x-approx_sol)
   start_time = time.time()
   do_newton = 0
+  close_count = 0
+  reject_streak = 0
+  newton_cooldown = 0
 
   r = A @ x - b
   grad = AT @ r
@@ -242,14 +319,23 @@ def Algo_Newton_BT_Ista(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cost,
     step_size = backtracking_linesearch(A, b, x, grad, prox, alpha)
     x_hat = prox(x - step_size*grad, step_size*alpha)
 
+    attempted_newton = False
     if do_newton:
+      attempted_newton = True
       Gradient_map = (x-x_hat)/step_size
       y = Gradient_map - grad
       d = subproblem_solver(A,x_hat,y,b, alpha)
-      newton_stepsize = 1
-      x_new = x_hat - newton_stepsize*d
-      if cost(A,x_new,b,alpha) >= cost(A,x_hat,b,alpha):
-        x_new = x_hat
+      x_new, accepted_newton = _accept_damped_newton_step(
+          A, b, alpha, cost, x_hat, d, beta, newton_stepsize,
+          max_backtracks=max_newton_backtracks
+      )
+      if accepted_newton:
+        reject_streak = 0
+      else:
+        reject_streak += 1
+        if reject_streak >= int(newton_reject_streak_trigger):
+          newton_cooldown = int(newton_reject_cooldown)
+          reject_streak = 0
     else:
       x_new = x_hat
 
@@ -258,10 +344,20 @@ def Algo_Newton_BT_Ista(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cost,
     cost_val[i+1] = cost(A,x_new,b,alpha)
     print('Iteration:', i, 'Cost:', cost_val[i+1])
 
-    if np.linalg.norm(x_new - x) < newt_tol: 
-       do_newton = True
+    if attempted_newton:
+      do_newton = False
+      close_count = 0
     else:
-       do_newton = False
+      if newton_cooldown > 0:
+        newton_cooldown -= 1
+        close_count = 0
+      else:
+        if np.linalg.norm(x_new - x) < newt_tol:
+          close_count += 1
+        else:
+          close_count = 0
+        if close_count >= int(newton_trigger_steps):
+          do_newton = True
 
     x = x_new
     r = A @ x - b
@@ -278,7 +374,9 @@ def Algo_Newton_BT_Ista(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cost,
 # -------------------------- Algo_Newton_Fista_new ---------------------------
 
 def Algo_Newton_Fista_new(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, tol, cost,
-                          prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0):
+                          prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
+                          newton_trigger_steps=3, newton_reject_streak_trigger=2,
+                          newton_reject_cooldown=8, max_newton_backtracks=25):
   x = x0.copy()
   z = x.copy()
   x_hat = x0.copy()
@@ -293,6 +391,9 @@ def Algo_Newton_Fista_new(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsiz
   time_list= np.empty(max_iter + 1, dtype=float)
   start_time = time.time()
   do_newton = 0
+  close_count = 0
+  reject_streak = 0
+  newton_cooldown = 0
 
   x_k[0] = np.linalg.norm(x0-approx_sol)
   cost_val[0] = cost(A,x0,b,alpha)
@@ -301,15 +402,25 @@ def Algo_Newton_Fista_new(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsiz
   for i in range(max_iter):
     grad = AT @ (A @ z - b)
     x_hat = prox(z - step_size*grad, alpha*step_size)
+    attempted_newton = False
+    accepted_newton = False
 
     if do_newton:
+      attempted_newton = True
       Gradient_map = (z-x_hat)/step_size
       y = Gradient_map - grad
       d =  subproblem_solver(A,x_hat,y,b, alpha)
-      newton_stepsize = 1
-      x_new = x_hat - newton_stepsize*d
-      if cost(A,x_new,b,alpha) >= cost(A,x_hat,b,alpha):
-        x_new = x_hat
+      x_new, accepted_newton = _accept_damped_newton_step(
+          A, b, alpha, cost, x_hat, d, beta, newton_stepsize,
+          max_backtracks=max_newton_backtracks
+      )
+      if accepted_newton:
+        reject_streak = 0
+      else:
+        reject_streak += 1
+        if reject_streak >= int(newton_reject_streak_trigger):
+          newton_cooldown = int(newton_reject_cooldown)
+          reject_streak = 0
     else:
       x_new = x_hat
 
@@ -318,16 +429,35 @@ def Algo_Newton_Fista_new(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsiz
     cost_val[i+1] = cost(A,x_new,b,alpha)
     print('Iteration:', i, 'Cost:', cost_val[i+1])
 
-    if np.linalg.norm(x_new - z) < newt_tol: 
-      do_newton = True
-    else:
+    if attempted_newton:
       do_newton = False
+      close_count = 0
+    else:
+      if newton_cooldown > 0:
+        newton_cooldown -= 1
+        close_count = 0
+      else:
+        # Use successive iterates for trigger consistency with ISTA-style rule.
+        if np.linalg.norm(x_new - x) < newt_tol:
+          close_count += 1
+        else:
+          close_count = 0
+        if close_count >= int(newton_trigger_steps):
+          do_newton = True
 
     x = x_new
-    t = (0.99 + np.sqrt(1 + 4*(t_old**2)))/2
-    z = x + ((t_old - 1) / t) * (x - x_old)
-    x_old = x
-    t_old = t
+    # Restart momentum when Newton step is effectively accepted or
+    # when acceleration causes a temporary objective increase.
+    if accepted_newton or (cost_val[i+1] > cost_val[i]):
+      t = 1.0
+      t_old = 1.0
+      z = x.copy()
+      x_old = x.copy()
+    else:
+      t = (0.99 + np.sqrt(1 + 4*(t_old**2)))/2
+      z = x + ((t_old - 1) / t) * (x - x_old)
+      x_old = x
+      t_old = t
 
     r = A @ x - b
     grad_xnew = AT @ r
@@ -341,7 +471,9 @@ def Algo_Newton_Fista_new(A,b,x0,alpha,max_iter, step_size, beta, newton_stepsiz
 # ------------------------ Algo_Newton_BT_Fista_new --------------------------
 
 def Algo_Newton_BT_Fista_new(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cost,
-                             prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0):
+                             prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
+                             newton_trigger_steps=3, newton_reject_streak_trigger=2,
+                             newton_reject_cooldown=8, max_newton_backtracks=25):
   x = x0.copy()
   z = x.copy()
   x_hat = x0.copy()
@@ -356,6 +488,9 @@ def Algo_Newton_BT_Fista_new(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, 
   time_list= np.empty(max_iter + 1, dtype=float)
   start_time = time.time()
   do_newton = 0
+  close_count = 0
+  reject_streak = 0
+  newton_cooldown = 0
 
   x_k[0] = np.linalg.norm(x0-approx_sol)
   cost_val[0] = cost(A,x0,b,alpha)
@@ -365,15 +500,25 @@ def Algo_Newton_BT_Fista_new(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, 
     grad = AT @ (A @ z - b)
     step_size = backtracking_linesearch(A, b, z, grad, prox, alpha)
     x_hat = prox(z - step_size*grad, alpha*step_size)
+    attempted_newton = False
+    accepted_newton = False
 
     if do_newton:
+      attempted_newton = True
       Gradient_map = (z-x_hat)/step_size
       y = Gradient_map - grad
       d = subproblem_solver(A,x_hat,y,b, alpha)
-      newton_stepsize = 1
-      x_new = x_hat - newton_stepsize*d
-      # if cost(A,x_new,b,alpha) >= cost(A,x_hat,b,alpha):
-      #    x_new = x_hat
+      x_new, accepted_newton = _accept_damped_newton_step(
+          A, b, alpha, cost, x_hat, d, beta, newton_stepsize,
+          max_backtracks=max_newton_backtracks
+      )
+      if accepted_newton:
+        reject_streak = 0
+      else:
+        reject_streak += 1
+        if reject_streak >= int(newton_reject_streak_trigger):
+          newton_cooldown = int(newton_reject_cooldown)
+          reject_streak = 0
     else:
       x_new = x_hat
 
@@ -382,16 +527,32 @@ def Algo_Newton_BT_Fista_new(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, 
     cost_val[i+1] = cost(A,x_new,b,alpha)
     print('Iteration:', i, 'Cost:', cost_val[i+1])
 
-    if np.linalg.norm(x_new - z) < newt_tol: 
-      do_newton = True
-    else:
+    if attempted_newton:
       do_newton = False
+      close_count = 0
+    else:
+      if newton_cooldown > 0:
+        newton_cooldown -= 1
+        close_count = 0
+      else:
+        if np.linalg.norm(x_new - x) < newt_tol:
+          close_count += 1
+        else:
+          close_count = 0
+        if close_count >= int(newton_trigger_steps):
+          do_newton = True
 
     x = x_new
-    t = (0.99 + np.sqrt(1 + 4*(t_old**2)))/2
-    z = x + ((t_old - 1) / t) * (x - x_old)
-    x_old = x
-    t_old = t
+    if accepted_newton or (cost_val[i+1] > cost_val[i]):
+      t = 1.0
+      t_old = 1.0
+      z = x.copy()
+      x_old = x.copy()
+    else:
+      t = (0.99 + np.sqrt(1 + 4*(t_old**2)))/2
+      z = x + ((t_old - 1) / t) * (x - x_old)
+      x_old = x
+      t_old = t
 
     r = A @ x - b
     grad_xnew = AT @ r
@@ -401,4 +562,3 @@ def Algo_Newton_BT_Fista_new(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, 
         return cost_val[:i+2].tolist(), x, i, x_k[:i+2].tolist(), time_list[:i+2].tolist()
   print(f'Algo_Newton_BT_Fista converge in {i} iteration')
   return cost_val.tolist(), x, i, x_k.tolist(), time_list.tolist()
-

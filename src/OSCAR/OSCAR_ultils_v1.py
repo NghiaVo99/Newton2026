@@ -375,7 +375,7 @@ def solve_oscar_gurobi(
 #     return x_opt, obj_val
 
 
-def sub_problem_oscar(A, yk, zk, b, w1, w2, time_limit=10.0, silent=True):
+def sub_problem_oscar(A, yk, zk, b, w1, w2, time_limit=10.0, silent=True, H=None):
     """
     Gurobi port of your CVXPY subproblem:
         minimize  0.5 * ||Q d||^2 - (g + z_k)^T d
@@ -383,7 +383,10 @@ def sub_problem_oscar(A, yk, zk, b, w1, w2, time_limit=10.0, silent=True):
     where Q = hessian_f(A) in your code (be sure what Q represents; see note above).
     """
     # Inputs and shapes
-    H = np.asarray(hessian_f(A), dtype=float)  # (n,n)
+    if H is None:
+        H = np.asarray(hessian_f(A), dtype=float)  # (n,n)
+    else:
+        H = np.asarray(H, dtype=float)
     g  = np.asarray(grad_f(A, yk, b), dtype=float)  # (n,)
     zk = np.asarray(zk, dtype=float)
     n = zk.shape[0]
@@ -427,17 +430,37 @@ def cost_oscar(A, x, b, w1, w2) -> float:
     r = A @ x - b
     return 0.5 * float(r @ r) + oscar_value(x, w1, w2)
 
-def backtracking_linesearch(A, b, x, grad, prox, w1,w2, beta=2):
+def backtracking_linesearch(
+    A,
+    b,
+    x,
+    grad,
+    prox,
+    w1,
+    w2,
+    beta=2,
+    f_x=None,
+    return_candidate=False,
+):
     """ Backtracking line search for step size selection """
+    if f_x is None:
+        r_x = A @ x - b
+        f_x = 0.5 * float(r_x @ r_x)
+
     L = 1
     while True:
         x_new = prox(x - (1/L) * grad,1/L,w1,w2, positive = False)
-        lhs = 0.5 * np.linalg.norm(A @ x_new - b)**2 
-        rhs = 0.5 * np.linalg.norm(A @ x - b)**2 - np.dot(grad, x - x_new) + (0.5 * L) * np.linalg.norm(x - x_new)**2
+        r_new = A @ x_new - b
+        lhs = 0.5 * float(r_new @ r_new)
+        dx = x - x_new
+        rhs = f_x - np.dot(grad, dx) + (0.5 * L) * float(dx @ dx)
         if lhs <= rhs:
             break
         L = L*beta
-    return 1/L
+    step = 1 / L
+    if return_candidate:
+        return step, x_new
+    return step
 
 
 def build_Q_from_oscar(n, z, w1, w2, atol=1e-9, rtol=1e-7, verbose=True):
@@ -580,5 +603,4 @@ def build_test_problem(n=200, sigma2=0.01, rho=0.7, seed=3):
     x_true[int(0.70*n):int(0.75*n)] =  6.0
     y = H @ x_true + np.sqrt(sigma2) * rng.standard_normal(n)
     return H, y, x_true
-
 

@@ -268,7 +268,7 @@ colors_sorted  = [colors[i] for i in order]
 axs[2].bar(methods_sorted, times_sorted, color=colors_sorted)
 axs[2].set_yscale('log')
 axs[2].set_ylabel("log(Runtime)")        
-axs[2].set_xticks("")            
+axs[2].set_xticks([])            
 #axs[2].tick_params(axis='x', labelrotation=45)
 
 num_methods = len(methods)

@@ -3,6 +3,47 @@ import time
 from src.OSCAR.OSCAR_ultils_v1 import *
 
 
+def _accept_damped_newton_step(
+    A,
+    b,
+    w1,
+    w2,
+    cost,
+    x_hat,
+    d,
+    beta,
+    newton_stepsize,
+    max_backtracks=25,
+    min_step=1e-12,
+):
+  """Try a damped Newton correction and keep the prox point on rejection."""
+  if not np.all(np.isfinite(d)):
+    return x_hat, False
+
+  step = float(newton_stepsize)
+  shrink = float(beta)
+  cost_hat = cost(A, x_hat, b, w1, w2)
+  if not np.isfinite(cost_hat):
+    return x_hat, False
+
+  for _ in range(int(max_backtracks)):
+    if step <= float(min_step):
+      break
+
+    x_trial = x_hat - step * d
+    if not np.all(np.isfinite(x_trial)):
+      step *= shrink
+      continue
+
+    cost_trial = cost(A, x_trial, b, w1, w2)
+    if np.isfinite(cost_trial) and cost_trial < cost_hat:
+      return x_trial, True
+
+    step *= shrink
+
+  return x_hat, False
+
+
 def ISTA(A,b,x0,w1,w2,max_iter, step_size, tol, cost, prox, approx_sol = 0):
   x = x0
   cost_val = [cost(A,x0,b,w1,w2)]
@@ -39,8 +80,9 @@ def BT_ISTA(A,b,x0,w1,w2,max_iter, tol, cost, prox, approx_sol = 0):
   for i in range(max_iter):
 
     grad = grad_f(A,x,b)
-    step_size = backtracking_linesearch(A, b, x, grad, prox, w1, w2)
-    x = prox(x - step_size*grad, step_size, w1, w2, positive = False)
+    step_size, x = backtracking_linesearch(
+        A, b, x, grad, prox, w1, w2, return_candidate=True
+    )
 
     x_k.append(np.linalg.norm(x-approx_sol))
     cost_val.append(cost(A,x,b,w1,w2))
@@ -103,9 +145,9 @@ def BT_FISTA1(A, b, x0, w1, w2, max_iter, tol, cost, prox, approx_sol = 0):
     for i in range(max_iter):
 
         grad = grad_f(A,z,b)
-        step_size = backtracking_linesearch(A, b, z, grad, prox, w1,w2)
-        z = z - step_size*grad
-        x = prox(z, step_size,w1,w2, positive = False)
+        step_size, x = backtracking_linesearch(
+            A, b, z, grad, prox, w1, w2, return_candidate=True
+        )
         x_k.append(np.linalg.norm(x-approx_sol))
         t_old = t
         t = (1 + np.sqrt(1 + 4*(t_old**2)))/2
@@ -126,138 +168,189 @@ def BT_FISTA1(A, b, x0, w1, w2, max_iter, tol, cost, prox, approx_sol = 0):
 
 
 def Algo_Newton_Ista(A,b,x0,w1,w2,max_iter, step_size, beta, newton_stepsize, tol, cost,
-                     prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0):
+                     prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
+                     verbose=False, newton_trigger_steps=3,
+                     newton_reject_streak_trigger=2,
+                     newton_reject_cooldown=8, max_newton_backtracks=25):
   x = x0
   cost_val = [cost(A,x0,b,w1,w2)]
   time_list = [0]
   x_k = [np.linalg.norm(x0-approx_sol)]
   start_time = time.time()
   do_newton = 0
+  close_count = 0
+  reject_streak = 0
+  newton_cooldown = 0
   grad = grad_f(A,x,b)
   for i in range(max_iter):
     
     x_hat = prox(x - step_size*grad, step_size,w1,w2, positive = False)
     #x_hat_k.append(np.linalg.norm(x_hat-approx_sol)/norm_sol)
     Gradient_map = (x-x_hat)/step_size
+    x_new = x_hat
+    new_cost = cost(A, x_hat, b, w1, w2)
+
+    attempted_newton = False
     if do_newton:
+      attempted_newton = True
   
       y = Gradient_map - grad
       d = subproblem_solver(A,x_hat,y,b, w1, w2)
-      print('norm_d:', np.linalg.norm(d))
-      newton_stepsize = 1
-      # while cost(A,x_hat - newton_stepsize*d,b,w1,w2) > cost(A,x_hat,b,w1,w2):
-      #     newton_stepsize = beta*newton_stepsize
-      x_new = x_hat - newton_stepsize*d
+      if verbose:
+          print('norm_d:', np.linalg.norm(d))
+      x_new, accepted_newton = _accept_damped_newton_step(
+          A, b, w1, w2, cost, x_hat, d, beta, newton_stepsize,
+          max_backtracks=max_newton_backtracks
+      )
       # do_newton = 0
       # if np.linalg.norm(d) <= 1e-4:
       #   time_list.append(time.time() - start_time)
       #   x_k.append(np.linalg.norm(x_new-approx_sol))
       #   cost_val.append(cost(A,x_new,b,w1,w2))
       #   return cost_val, x_new, i, x_k, time_list
-      if cost(A,x_new,b,w1,w2) > cost_val[-1]: # or np.linalg.norm(d) >= 1e-3:
-          x_new = x_hat
-          do_newton = 0
-
-    else:
-      x_new = x_hat
-      #d_norm.append(0)
+      new_cost = cost(A, x_new, b, w1, w2)
+      if accepted_newton:
+          reject_streak = 0
+      else:
+          reject_streak += 1
+          if reject_streak >= int(newton_reject_streak_trigger):
+              newton_cooldown = int(newton_reject_cooldown)
+              reject_streak = 0
 
     time_list.append(time.time() - start_time)
     x_k.append(np.linalg.norm(x_new-approx_sol))
-    cost_val.append(cost(A,x_new,b,w1,w2))
+    cost_val.append(new_cost)
     #print('Iteration:', i, 'Cost:', cost_val[-1])    
 
-    if np.linalg.norm(x_new - x) < newt_tol: 
-    #if np.linalg.norm(Gradient_map)/(1 + np.linalg.norm(x)) < newt_tol: 
-       do_newton = True
-    else:
+    if attempted_newton:
        do_newton = False
+       close_count = 0
+    elif newton_cooldown > 0:
+       newton_cooldown -= 1
+       close_count = 0
+       do_newton = False
+    else:
+       if np.linalg.norm(x_new - x) < newt_tol:
+          close_count += 1
+       else:
+          close_count = 0
+       do_newton = close_count >= int(newton_trigger_steps)
     
     x = x_new
     grad_xnew = grad_f(A,x_new,b)
-    stopping_criteria = np.linalg.norm(x_new - prox(x_new - step_size*grad_xnew, step_size,w1,w2,positive = False))/ (1 + np.linalg.norm(x_new) + np.linalg.norm(grad_xnew))
-    if stopping_criteria < tol:
-    #if abs(cost_val[-1] - optim_cost) < tol: # or abs(cost_val[-1] - cost_val[-2]) < tol:
-        print(f'Algo_Newton_Ista converge in {i} iteration')
-        print(f'optim_cost: {cost_val[-1]}')
-        return cost_val, x, i, x_k, time_list
+    if tol >= 0:
+      stopping_criteria = np.linalg.norm(x_new - prox(x_new - step_size*grad_xnew, step_size,w1,w2,positive = False))/ (1 + np.linalg.norm(x_new) + np.linalg.norm(grad_xnew))
+      if stopping_criteria < tol:
+      #if abs(cost_val[-1] - optim_cost) < tol: # or abs(cost_val[-1] - cost_val[-2]) < tol:
+          if verbose:
+              print(f'Algo_Newton_Ista converge in {i} iteration')
+              print(f'optim_cost: {cost_val[-1]}')
+          return cost_val, x, i, x_k, time_list
 
     grad = grad_xnew
     
-  print(f'Algo_Newton_Ista converge in {i} iteration')
+  if verbose:
+      print(f'Algo_Newton_Ista converge in {i} iteration')
   return cost_val, x, i, x_k, time_list
 
 
 def Algo_Newton_BT_Ista(A,b,x0,w1,w2,max_iter, beta, newton_stepsize, tol, cost,
-                        prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0):
+                        prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
+                        verbose=False, newton_trigger_steps=3,
+                        newton_reject_streak_trigger=2,
+                        newton_reject_cooldown=8, max_newton_backtracks=25):
   x = x0
   cost_val = [cost(A,x0,b,w1,w2)]
   time_list = [0]
   x_k = [np.linalg.norm(x0-approx_sol)]
   start_time = time.time()
   do_newton = 0
+  close_count = 0
+  reject_streak = 0
+  newton_cooldown = 0
   grad = grad_f(A,x,b)
   for i in range(max_iter):
     
-    step_size = backtracking_linesearch(A, b, x, grad, prox, w1,w2)
-    x_hat = prox(x - step_size*grad, step_size,w1,w2, positive = False)
+    step_size, x_hat = backtracking_linesearch(
+        A, b, x, grad, prox, w1, w2, return_candidate=True
+    )
     Gradient_map = (x-x_hat)/step_size
 
+    x_new = x_hat
+    new_cost = cost(A, x_hat, b, w1, w2)
+
+    attempted_newton = False
     if do_newton:
+      attempted_newton = True
       
       y = Gradient_map - grad
       d = subproblem_solver(A,x_hat,y,b, w1, w2)
-      print('norm_d:', np.linalg.norm(d))
+      if verbose:
+          print('norm_d:', np.linalg.norm(d))
 
       #d_norm.append(np.linalg.norm(d))
-      newton_stepsize = 1
-      # while cost(A,x_hat - newton_stepsize*d,b,w1,w2) > cost(A,x_hat,b,w1,w2):
-      #     newton_stepsize = beta*newton_stepsize
-      x_new = x_hat - newton_stepsize*d
+      x_new, accepted_newton = _accept_damped_newton_step(
+          A, b, w1, w2, cost, x_hat, d, beta, newton_stepsize,
+          max_backtracks=max_newton_backtracks
+      )
       #do_newton = 0
       # if np.linalg.norm(d) <= 1e-4:
       #   time_list.append(time.time() - start_time)
       #   x_k.append(np.linalg.norm(x_new-approx_sol))
       #   cost_val.append(cost(A,x_new,b,w1,w2))
       #   return cost_val, x_new, i, x_k, time_list
-      if cost(A,x_new,b,w1,w2) > cost_val[-1]: # or np.linalg.norm(d) >= 1e-3:
-        x_new = x_hat
-        #do_newton = 0
-
-    else:
-      x_new = x_hat
-      #d_norm.append(0)
+      new_cost = cost(A, x_new, b, w1, w2)
+      if accepted_newton:
+          reject_streak = 0
+      else:
+          reject_streak += 1
+          if reject_streak >= int(newton_reject_streak_trigger):
+              newton_cooldown = int(newton_reject_cooldown)
+              reject_streak = 0
 
     time_list.append(time.time() - start_time)
     x_k.append(np.linalg.norm(x_new-approx_sol))
-    cost_val.append(cost(A,x_new,b,w1,w2))
+    cost_val.append(new_cost)
     #print('Iteration:', i, 'Cost:', cost_val[-1])    
 
-    if np.linalg.norm(x_new - x) < newt_tol: 
-    #if np.linalg.norm(Gradient_map)/(1 + np.linalg.norm(x)) < newt_tol:
-       do_newton = True
-    else:
+    if attempted_newton:
        do_newton = False
+       close_count = 0
+    elif newton_cooldown > 0:
+       newton_cooldown -= 1
+       close_count = 0
+       do_newton = False
+    else:
+       if np.linalg.norm(x_new - x) < newt_tol:
+          close_count += 1
+       else:
+          close_count = 0
+       do_newton = close_count >= int(newton_trigger_steps)
     
     x = x_new
     grad_xnew = grad_f(A,x_new,b)
-    step_size = backtracking_linesearch(A, b, x, grad_xnew, prox, w1,w2)
-    stopping_criteria = np.linalg.norm(x_new - prox(x_new - step_size*grad_xnew, step_size,w1,w2,positive = False))/ (1 + np.linalg.norm(x_new) + np.linalg.norm(grad_xnew))
-    if stopping_criteria < tol:
-    #if abs(cost_val[-1] - optim_cost) < tol: # or abs(cost_val[-1] - cost_val[-2]) < tol:
-        print(f'Algo_Newton_BT_Ista converge in {i} iteration')
-        print(f'optim_cost: {cost_val[-1]}')
-        return cost_val, x, i, x_k, time_list
+    if tol >= 0:
+      stopping_criteria = np.linalg.norm(x_new - prox(x_new - step_size*grad_xnew, step_size,w1,w2,positive = False))/ (1 + np.linalg.norm(x_new) + np.linalg.norm(grad_xnew))
+      if stopping_criteria < tol:
+      #if abs(cost_val[-1] - optim_cost) < tol: # or abs(cost_val[-1] - cost_val[-2]) < tol:
+          if verbose:
+              print(f'Algo_Newton_BT_Ista converge in {i} iteration')
+              print(f'optim_cost: {cost_val[-1]}')
+          return cost_val, x, i, x_k, time_list
 
     grad = grad_xnew
     
-  print(f'Algo_Newton_BT_Ista converge in {i} iteration')
+  if verbose:
+      print(f'Algo_Newton_BT_Ista converge in {i} iteration')
   return cost_val, x, i, x_k, time_list
 
 
 
 def Algo_Newton_Fista_new(A,b,x0,w1,w2,max_iter, step_size, beta, newton_stepsize, tol, cost,
-                             prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0):
+                             prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
+                             verbose=False, newton_trigger_steps=3,
+                             newton_reject_streak_trigger=2,
+                             newton_reject_cooldown=8, max_newton_backtracks=25):
     x = x0
     z = x.copy()
     x_hat = x0
@@ -270,6 +363,9 @@ def Algo_Newton_Fista_new(A,b,x0,w1,w2,max_iter, step_size, beta, newton_stepsiz
     time_list = [0]
     start_time = time.time()
     do_newton = 0
+    close_count = 0
+    reject_streak = 0
+    newton_cooldown = 0
     
     for i in range(max_iter):
 
@@ -283,58 +379,85 @@ def Algo_Newton_Fista_new(A,b,x0,w1,w2,max_iter, step_size, beta, newton_stepsiz
         x_new = x_hat
         new_cost = cost(A, x_hat, b, w1, w2)
 
+        attempted_newton = False
+        accepted_newton = False
         if do_newton:
+            attempted_newton = True
             # Newton refinement around x_hat
             y = Gradient_map - grad
             d = subproblem_solver(A, x_hat, y, b, w1, w2)
-            print('norm_d:', np.linalg.norm(d))
+            if verbose:
+                print('norm_d:', np.linalg.norm(d))
 
-            newton_stepsize = 1.0  # or do your own Newton line search here
-            x_trial = x_hat - newton_stepsize * d
-            trial_cost = cost(A, x_trial, b, w1, w2)
-
-            # If Newton improves on the FISTA step, accept it; otherwise stay with x_hat
-            if trial_cost <= new_cost:
-                x_new = x_trial
-                new_cost = trial_cost
-                t_old = 1
+            x_new, accepted_newton = _accept_damped_newton_step(
+                A, b, w1, w2, cost, x_hat, d, beta, newton_stepsize,
+                max_backtracks=max_newton_backtracks
+            )
+            new_cost = cost(A, x_new, b, w1, w2)
+            if accepted_newton:
+                reject_streak = 0
+            else:
+                reject_streak += 1
+                if reject_streak >= int(newton_reject_streak_trigger):
+                    newton_cooldown = int(newton_reject_cooldown)
+                    reject_streak = 0
 
         time_list.append(time.time() - start_time)
         x_k.append(np.linalg.norm(x_new - approx_sol))
         cost_val.append(new_cost)
 
         # Decide whether to enable Newton next iteration
-        if np.linalg.norm(x_new - z) < newt_tol:
-        # if np.linalg.norm(Gradient_map)/(1 + np.linalg.norm(z)) < newt_tol:
-            do_newton = True
-        else:
+        if attempted_newton:
             do_newton = False
+            close_count = 0
+        elif newton_cooldown > 0:
+            newton_cooldown -= 1
+            close_count = 0
+            do_newton = False
+        else:
+            if np.linalg.norm(x_new - x) < newt_tol:
+                close_count += 1
+            else:
+                close_count = 0
+            do_newton = close_count >= int(newton_trigger_steps)
 
         # FISTA extrapolation
         x = x_new
-        t = (0.99 + np.sqrt(1 + 4*(t_old**2))) / 2
-        z = x + ((t_old - 1) / t) * (x - x_old)
-        x_old = x
-        t_old = t
+        if accepted_newton or (cost_val[-1] > cost_val[-2]):
+            t = 1
+            t_old = 1
+            z = x.copy()
+            x_old = x.copy()
+        else:
+            t = (0.99 + np.sqrt(1 + 4*(t_old**2))) / 2
+            z = x + ((t_old - 1) / t) * (x - x_old)
+            x_old = x
+            t_old = t
 
         # Stopping criterion
-        grad_xnew = grad_f(A, x_new, b)
-        stopping_criteria = np.linalg.norm(
-            x - prox(x - step_size * grad_xnew, step_size, w1, w2, positive=False)
-        ) / (1 + np.linalg.norm(x_new) + np.linalg.norm(grad_xnew))
+        if tol >= 0:
+            grad_xnew = grad_f(A, x_new, b)
+            stopping_criteria = np.linalg.norm(
+                x - prox(x - step_size * grad_xnew, step_size, w1, w2, positive=False)
+            ) / (1 + np.linalg.norm(x_new) + np.linalg.norm(grad_xnew))
 
-        if stopping_criteria < tol:
-            print(f'Algo_Newton_Fista converge in {i} iteration')
-            print(f'optim_cost: {new_cost}')
-            return cost_val, x, i, x_k, time_list
+            if stopping_criteria < tol:
+                if verbose:
+                    print(f'Algo_Newton_Fista converge in {i} iteration')
+                    print(f'optim_cost: {new_cost}')
+                return cost_val, x, i, x_k, time_list
     
-    print(f'Algo_Newton_Fista converge in {i} iteration')
+    if verbose:
+        print(f'Algo_Newton_Fista converge in {i} iteration')
     return cost_val, x, i, x_k, time_list
 
 
 
 def Algo_Newton_BT_Fista_new(A,b,x0,w1,w2,max_iter, step_size, beta, newton_stepsize, tol, cost,
-                             prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0):
+                             prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
+                             verbose=False, newton_trigger_steps=3,
+                             newton_reject_streak_trigger=2,
+                             newton_reject_cooldown=8, max_newton_backtracks=25):
     x = x0
     z = x.copy()
     x_hat = x0
@@ -347,66 +470,94 @@ def Algo_Newton_BT_Fista_new(A,b,x0,w1,w2,max_iter, step_size, beta, newton_step
     time_list = [0]
     start_time = time.time()
     do_newton = 0
+    close_count = 0
+    reject_streak = 0
+    newton_cooldown = 0
     
     for i in range(max_iter):
 
         # FISTA + backtracking step
         grad = grad_f(A, z, b)
-        step_size = backtracking_linesearch(A, b, z, grad, prox, w1, w2)
+        step_size, x_hat = backtracking_linesearch(
+            A, b, z, grad, prox, w1, w2, return_candidate=True
+        )
         #print('iteration:', i, 'stepsize:', step_size)
-        x_hat = prox(z - step_size*grad, step_size, w1, w2, positive=False)
         Gradient_map = (z - x_hat) / step_size
 
         # Start from pure FISTA step
         x_new = x_hat
         new_cost = cost(A, x_hat, b, w1, w2)
 
+        attempted_newton = False
+        accepted_newton = False
         if do_newton:
+            attempted_newton = True
             # Newton refinement around x_hat
             y = Gradient_map - grad
             d = subproblem_solver(A, x_hat, y, b, w1, w2)
-            print('norm_d:', np.linalg.norm(d))
+            if verbose:
+                print('norm_d:', np.linalg.norm(d))
 
-            newton_stepsize = 1.0  # or do your own Newton line search here
-            x_trial = x_hat - newton_stepsize * d
-            trial_cost = cost(A, x_trial, b, w1, w2)
-
-            # If Newton improves on the FISTA step, accept it; otherwise stay with x_hat
-            if trial_cost <= new_cost:
-                x_new = x_trial
-                new_cost = trial_cost
-                t_old = 1
+            x_new, accepted_newton = _accept_damped_newton_step(
+                A, b, w1, w2, cost, x_hat, d, beta, newton_stepsize,
+                max_backtracks=max_newton_backtracks
+            )
+            new_cost = cost(A, x_new, b, w1, w2)
+            if accepted_newton:
+                reject_streak = 0
+            else:
+                reject_streak += 1
+                if reject_streak >= int(newton_reject_streak_trigger):
+                    newton_cooldown = int(newton_reject_cooldown)
+                    reject_streak = 0
 
         time_list.append(time.time() - start_time)
         x_k.append(np.linalg.norm(x_new - approx_sol))
         cost_val.append(new_cost)
 
         # Decide whether to enable Newton next iteration
-        if np.linalg.norm(x_new - z) < newt_tol:
-        # if np.linalg.norm(Gradient_map)/(1 + np.linalg.norm(z)) < newt_tol:
-            do_newton = True
-        else:
+        if attempted_newton:
             do_newton = False
+            close_count = 0
+        elif newton_cooldown > 0:
+            newton_cooldown -= 1
+            close_count = 0
+            do_newton = False
+        else:
+            if np.linalg.norm(x_new - x) < newt_tol:
+                close_count += 1
+            else:
+                close_count = 0
+            do_newton = close_count >= int(newton_trigger_steps)
 
         # FISTA extrapolation
         x = x_new
-        t = (0.99 + np.sqrt(1 + 4*(t_old**2))) / 2
-        z = x + ((t_old - 1) / t) * (x - x_old)
-        x_old = x
-        t_old = t
+        if accepted_newton or (cost_val[-1] > cost_val[-2]):
+            t = 1
+            t_old = 1
+            z = x.copy()
+            x_old = x.copy()
+        else:
+            t = (0.99 + np.sqrt(1 + 4*(t_old**2))) / 2
+            z = x + ((t_old - 1) / t) * (x - x_old)
+            x_old = x
+            t_old = t
 
         # Stopping criterion
-        grad_xnew = grad_f(A, x_new, b)
-        stopping_criteria = np.linalg.norm(
-            x - prox(x - step_size * grad_xnew, step_size, w1, w2, positive=False)
-        ) / (1 + np.linalg.norm(x_new) + np.linalg.norm(grad_xnew))
+        if tol >= 0:
+            grad_xnew = grad_f(A, x_new, b)
+            stopping_criteria = np.linalg.norm(
+                x - prox(x - step_size * grad_xnew, step_size, w1, w2, positive=False)
+            ) / (1 + np.linalg.norm(x_new) + np.linalg.norm(grad_xnew))
 
-        if stopping_criteria < tol:
-            print(f'Algo_Newton_BT_Fista converge in {i} iteration')
-            print(f'optim_cost: {new_cost}')
-            return cost_val, x, i, x_k, time_list
+            if stopping_criteria < tol:
+                if verbose:
+                    print(f'Algo_Newton_BT_Fista converge in {i} iteration')
+                    print(f'optim_cost: {new_cost}')
+                return cost_val, x, i, x_k, time_list
     
-    print(f'Algo_Newton_BT_Fista converge in {i} iteration')
+    if verbose:
+        print(f'Algo_Newton_BT_Fista converge in {i} iteration')
     return cost_val, x, i, x_k, time_list
 
 

@@ -1,9 +1,18 @@
 from re import S
 import numpy as np
-import cvxpy as cp
-import gurobipy as gp
-from gurobipy import GRB
 from scipy import sparse
+
+try:
+    import cvxpy as cp
+except Exception:  # pragma: no cover - optional dependency
+    cp = None
+
+try:
+    import gurobipy as gp
+    from gurobipy import GRB
+except Exception:  # pragma: no cover - optional dependency
+    gp = None
+    GRB = None
 
 
 def cost_lasso(A, x, b, alpha):
@@ -98,6 +107,9 @@ def solve_lasso_cvxpy(A, b, alpha):
     Returns:
         x_opt (np.ndarray): Solution vector x (estimated coefficients)
     """
+    if cp is None:
+        raise ImportError("cvxpy is required to use solve_lasso_cvxpy.")
+
     n, p = A.shape
     x = cp.Variable(p)
 
@@ -133,6 +145,9 @@ def solve_lasso_gurobi(A, b, alpha, time_limit=60, verbose=False, warm_start=Non
     -------
     x_opt : np.ndarray, shape (p,)
     """
+
+    if gp is None or GRB is None:
+        raise ImportError("gurobipy is required to use solve_lasso_gurobi.")
 
     # Ensure shapes
     if sparse.issparse(A):
@@ -195,6 +210,9 @@ def solve_lasso_gurobi(A, b, alpha, time_limit=60, verbose=False, warm_start=Non
     return x_opt, opt_val
     
 def sub_problem_of_lasso(A, x, y, b, alpha):
+    if gp is None or GRB is None:
+        raise ImportError("gurobipy is required to use sub_problem_of_lasso.")
+
     m = gp.Model()
 
     kappa = np.where(np.abs(y) >= 0.999*alpha)[0]   # keep only these
@@ -354,5 +372,4 @@ def lipschitz_exact(A_tilde):
     # Dense fallback (or if no SciPy): this *requires* A_tilde to be a NumPy array
     sigma_max = np.linalg.norm(np.asarray(A_tilde), 2)
     return float(sigma_max**2)
-
 

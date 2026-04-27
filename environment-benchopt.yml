@@ -1,0 +1,13 @@
+name: benchopt-lasso
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - matplotlib
+  - scikit-learn
+  - numba
+  - pip
+  - pip:
+      - benchopt==1.9.0

@@ -7,7 +7,7 @@ Newton methods for polyhedral regularized optimization problems, including
 Lasso, generalized Lasso / TV-1D, infinity-norm regularization, group Lasso,
 OSCAR, and related imaging examples.
 
-Paper link: [https://arxiv.org/pdf/2511.16514](https://example.com)
+Paper link: [https://arxiv.org/pdf/2511.16514](https://arxiv.org/pdf/2511.16514)
 
 The central idea in the numerical experiments is to run a robust first-order
 method at the beginning, identify an effective low-dimensional subspace or
@@ -29,8 +29,6 @@ benchmark suites.
   SSNAL/Newton-ALM comparison code.
 - `src/Group_Lasso/`: group-Lasso proximal operators, utilities, and Newton
   hybrid solvers.
-- `src/NMF/`: nonnegative matrix factorization experiments with projected
-  gradient and Newton-triggered variants.
 - `src/Benchmarking_Free_FISTA/`: first-order method experiments and notebooks
   for composite optimization problems.
 - `benchmarks/benchmark_lasso/`: Benchopt benchmark for dense Lasso with

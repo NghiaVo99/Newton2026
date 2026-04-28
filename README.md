@@ -7,6 +7,8 @@ Newton methods for polyhedral regularized optimization problems, including
 Lasso, generalized Lasso / TV-1D, infinity-norm regularization, group Lasso,
 OSCAR, and related imaging examples.
 
+Paper link: [https://arxiv.org/pdf/2511.16514](https://example.com)
+
 The central idea in the numerical experiments is to run a robust first-order
 method at the beginning, identify an effective low-dimensional subspace or
 active manifold, and then apply a damped Newton correction on that subspace.
@@ -146,6 +148,10 @@ for a broader map of the repository.
 ### OSCAR
 
 ![OSCAR benchmark result](src/oscar_final.png)
+
+### TV-1D
+
+![TV-1D benchmark result](src/TV_v1.png)
 
 ## Notes
 

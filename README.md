@@ -10,8 +10,7 @@ OSCAR, and related imaging examples.
 Paper link: [https://arxiv.org/pdf/2511.16514](https://arxiv.org/pdf/2511.16514)
 
 The central idea in the numerical experiments is to run a robust first-order
-method at the beginning, identify an effective low-dimensional subspace or
-active manifold, and then apply a damped Newton correction on that subspace.
+method at the beginning, identify an effective subspace, and then apply a damped Newton correction on that subspace.
 The Newton step is protected by objective-decrease safeguards and, in the
 Benchopt benchmarks, compared against standard solvers from the corresponding
 benchmark suites.
@@ -27,8 +26,6 @@ benchmark suites.
 - `src/ell_inf/`: infinity-norm regularized regression experiments.
 - `src/OSCAR/`: OSCAR regularization solvers, utilities, Newton variants, and
   SSNAL/Newton-ALM comparison code.
-- `src/Group_Lasso/`: group-Lasso proximal operators, utilities, and Newton
-  hybrid solvers.
 - `src/Benchmarking_Free_FISTA/`: first-order method experiments and notebooks
   for composite optimization problems.
 - `benchmarks/benchmark_lasso/`: Benchopt benchmark for dense Lasso with

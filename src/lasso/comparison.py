@@ -1,8 +1,14 @@
 import numpy as np
 import matplotlib as mpl
+import sys
+from pathlib import Path
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.io import loadmat
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # from utils_lasso import *
 from src.lasso.untils_infinity import *

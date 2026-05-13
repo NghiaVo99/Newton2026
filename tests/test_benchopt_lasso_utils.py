@@ -16,7 +16,9 @@ from benchmarks.benchmark_lasso.benchmark_utils.lasso_utils import run_newton_is
 from src.lasso.newton_lasso import Algo_Newton_BT_Fista_new
 from src.lasso.newton_lasso import Algo_Newton_BT_Ista
 from src.lasso.newton_lasso import Algo_Newton_Fista_new
+from src.lasso.newton_lasso import Algo_Globalized_Effective_Subspace_Newton_Lasso
 from src.lasso.newton_lasso import Algo_Newton_Ista
+from src.lasso.newton_lasso import _solve_alg5_lasso_direction
 from src.lasso.utils_lasso import cost_lasso
 from src.lasso.utils_lasso import lipschitz_exact
 from src.lasso.utils_lasso import proxL1
@@ -219,6 +221,44 @@ class BenchoptLassoUtilsTest(unittest.TestCase):
         expected = self._manual_dense_subproblem(x, y)
 
         np.testing.assert_allclose(actual, expected)
+
+    def test_algorithm5_lasso_returns_finite_histories_and_descends(self):
+        costs, beta, n_iter, dists, times = (
+            Algo_Globalized_Effective_Subspace_Newton_Lasso(
+                self.X,
+                self.y,
+                self.x0,
+                self.lmbd,
+                10,
+                self.step_size,
+                self.no_early_stop_tol,
+                cost_lasso,
+                proxL1,
+                approx_sol=0,
+                epsilon=DEFAULT_ISTA_NEWTON_TOL,
+                verbose=False,
+            )
+        )
+
+        self.assertGreaterEqual(n_iter, 0)
+        self.assertEqual(len(costs), len(dists))
+        self.assertEqual(len(costs), len(times))
+        self.assertTrue(np.all(np.isfinite(costs)))
+        self.assertTrue(np.all(np.isfinite(beta)))
+        self.assertTrue(np.all(np.isfinite(dists)))
+        self.assertTrue(np.all(np.isfinite(times)))
+        self.assertLessEqual(costs[-1], costs[0] + 1e-10)
+        self.assertTrue(np.all(np.diff(costs) <= 1e-8))
+
+    def test_algorithm5_empty_effective_subspace_direction_is_zero(self):
+        x = np.linspace(-0.2, 0.2, self.X.shape[1])
+        y = x.copy()
+        z = np.zeros_like(x)
+
+        direction = _solve_alg5_lasso_direction(
+            self.X, y, z, self.y, self.lmbd, mu=1.0, active_tol=1e-12)
+
+        np.testing.assert_allclose(direction, np.zeros_like(x))
 
 
 if __name__ == "__main__":

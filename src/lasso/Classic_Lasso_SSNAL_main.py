@@ -35,6 +35,7 @@ def Classic_Lasso_SSNAL_main(Amap0, ATmap0, b, lam, parmain, y, xi, x):
     scale       = parmain['scale']
     maxiter     = parmain['maxiter']
     printyes    = parmain['printyes']
+    record_history = bool(parmain.get('record_history', printyes))
     rescale     = parmain['rescale']
     stoptol     = parmain['stoptol']
     orgobjconst = parmain['orgojbconst']
@@ -196,6 +197,12 @@ def Classic_Lasso_SSNAL_main(Amap0, ATmap0, b, lam, parmain, y, xi, x):
     # Begin main SSNAL iteration loop
     x_history = [x]  
     time_history = []
+    if record_history and not printyes:
+        runhist['primobj'].append(obj[0])
+        runhist['dualobj'].append(obj[1])
+        runhist['time'].append(0.0)
+        runhist['relgap'].append(relgap)
+        time_history.append(0.0)
     for it in range(1, maxiter + 1):
         # (1) Optional rescaling step
         # MATLAB condition:
@@ -346,33 +353,33 @@ def Classic_Lasso_SSNAL_main(Amap0, ATmap0, b, lam, parmain, y, xi, x):
                 breakyes = True
                 msg = 'converged'
 
-        # (10) Print iteration summary if requested
-        if printyes:
+        # (10) Record and optionally print iteration summary.
+        if printyes or record_history:
             objscale = bscale * cscale
             primobj  = objscale * (0.5 * np.linalg.norm(Rp1)**2 + np.linalg.norm(ld * x, 1)) + orgobjconst
             dualobj  = objscale * (-0.5 * np.linalg.norm(xi)**2 + borg @ xi) + orgobjconst
             relgap   = (primobj - dualobj) / (1.0 + abs(primobj) + abs(dualobj))
             ttime    = time.time() - tstart
             time_history.append(ttime)
-            print(f"\n {it:5d} | [{primfeas:.2e} {dualfeas:.2e}]    [{primfeasorg:.2e} {dualfeasorg:.2e}]   {relgap:.2e} | {primobj:.4e}  {dualobj:.4e} | {ttime:5.1f} | {sigma:.2e} | sigamorg = {sigma * bscale/cscale:.2e} | ", end='')
-
-            if it >= 1:
-                print(f"{int(np.sum(1.0 - parNCG['rr']))} |", end='')
-
-            if eta is not None:
-                print(f"\n       [eta = {eta:.2e}, etaorg = {etaorg:.2e}]", end='')
-
-            if it % 3 == 1:
-                normx     = np.linalg.norm(x)
-                normAtxi  = np.linalg.norm(Atxi)
-                normy_now = np.linalg.norm(y)
-                print(f"\n       [normx, Atxi, y = {normx:.2e} {normAtxi:.2e} {normy_now:.2e}]", end='')
-
-            # Record objectives and time into run history
             runhist['primobj'].append(primobj)
             runhist['dualobj'].append(dualobj)
             runhist['time'].append(ttime)
             runhist['relgap'].append(relgap)
+
+            if printyes:
+                print(f"\n {it:5d} | [{primfeas:.2e} {dualfeas:.2e}]    [{primfeasorg:.2e} {dualfeasorg:.2e}]   {relgap:.2e} | {primobj:.4e}  {dualobj:.4e} | {ttime:5.1f} | {sigma:.2e} | sigamorg = {sigma * bscale/cscale:.2e} | ", end='')
+
+                if it >= 1:
+                    print(f"{int(np.sum(1.0 - parNCG['rr']))} |", end='')
+
+                if eta is not None:
+                    print(f"\n       [eta = {eta:.2e}, etaorg = {etaorg:.2e}]", end='')
+
+                if it % 3 == 1:
+                    normx     = np.linalg.norm(x)
+                    normAtxi  = np.linalg.norm(Atxi)
+                    normy_now = np.linalg.norm(y)
+                    print(f"\n       [normx, Atxi, y = {normx:.2e} {normAtxi:.2e} {normy_now:.2e}]", end='')
 
         # (11) Break if converged
         if breakyes:

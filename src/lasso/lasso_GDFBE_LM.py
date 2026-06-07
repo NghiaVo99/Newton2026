@@ -13,10 +13,13 @@ def psi(z, gamma, A, b, mu):
     r = prox(z - gamma * q, mu, gamma)
     return 0.5 * np.linalg.norm(p) ** 2 - 0.5 * gamma * np.linalg.norm(q) ** 2 + mu * np.linalg.norm(r, 1) + (0.5 / gamma) * np.linalg.norm(z - gamma * q - r) ** 2
 
-def lasso_GDFBE_LM(A, b, mu, approx_sol, tol):
+def lasso_GDFBE_LM(A, b, mu, approx_sol, tol, x0=None):
     start_time = time.time()
     m, n = A.shape
-    x = np.zeros(n)
+    if x0 is None:
+        x = np.zeros(n)
+    else:
+        x = np.asarray(x0, dtype=float).reshape(-1).copy()
     ATA = A.T @ A
     c = A.T @ b
     gamma = 0.5 / np.linalg.norm(ATA, 2)
@@ -26,7 +29,9 @@ def lasso_GDFBE_LM(A, b, mu, approx_sol, tol):
     optim_cost = value_of_function(A,b,mu,approx_sol)
 
     iter_count = 1
-    cost_hist, x_hist, time_hist = [], [], []
+    cost_hist = [value_of_function(A, b, mu, x)]
+    x_hist = [np.linalg.norm(x - approx_sol)]
+    time_hist = [0.0]
     residual = np.linalg.norm(x - prox(x - ATA @ x + A.T @ b, mu, 1)) / (1 + np.linalg.norm(x) + np.linalg.norm(A @ x - b))
 
     while residual > tol and time.time() - start_time < 10000:
@@ -80,4 +85,3 @@ def lasso_GDFBE_LM(A, b, mu, approx_sol, tol):
 # print("Recovered x:", np.round(x_est, 6))
 # print("True x:     ", x_true)
 # print("Error norm: ", np.linalg.norm(x_est - x_true))
-

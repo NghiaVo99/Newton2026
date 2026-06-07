@@ -240,11 +240,19 @@ def sub_problem_of_lasso(A, x, y, b, alpha):
 
     # --- embed back into full length --------------------------
     d_full       = np.zeros_like(y)
-    if m.Status == GRB.OPTIMAL:
-        d_full[kappa] = d_k.X
-    elif m.Status == GRB.TIME_LIMIT:
-        #print("Gurobi reached time limit, returning partial solution.")
-        d_full[kappa] = d_k.X if d_k.X is not None else np.zeros_like(d_k.X)
+    if getattr(m, "SolCount", 0) > 0:
+        d_full[kappa] = np.asarray(d_k.X, dtype=float).reshape(-1)
+        return d_full
+
+    # Gurobi may return statuses such as TIME_LIMIT/UNBOUNDED without an
+    # incumbent; in that case MVar.X is unavailable. Fall back to a damped
+    # linear solve so callers get a finite direction instead of crashing.
+    rhs = g + y[kappa]
+    reg = 1e-10 * max(1.0, float(np.linalg.norm(Q, ord=2)))
+    try:
+        d_full[kappa] = np.linalg.solve(Q + reg * np.eye(kappa.size), rhs)
+    except np.linalg.LinAlgError:
+        d_full[kappa] = np.linalg.lstsq(Q + reg * np.eye(kappa.size), rhs, rcond=None)[0]
     return d_full
 
 

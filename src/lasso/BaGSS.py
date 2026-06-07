@@ -17,7 +17,8 @@ class BasGSSLasso:
                  eps=1e-6, max_iters=10000, search_dir='gssn_l1', newton_tol=1e-10,
                  # ---- CG controls ----
                  cg_tol=1e-8, cg_maxit=5000, cg_precond='jacobi',
-                 seed=None):
+                 cg_ridge=0.0, dense_fallback_max_size=500,
+                 seed=None, verbose=False):
         self.A = A
         self.b = b
         self.lambda_reg = float(lambda_reg)
@@ -31,10 +32,13 @@ class BasGSSLasso:
         self.lambda_bar = float(lambda_bar)
         self.search_dir = search_dir
         self.newton_tol = float(newton_tol)
+        self.verbose = bool(verbose)
         # CG params
         self.cg_tol = float(cg_tol)
         self.cg_maxit = int(cg_maxit)
         self.cg_precond = str(cg_precond) if cg_precond is not None else None
+        self.cg_ridge = float(cg_ridge)
+        self.dense_fallback_max_size = int(dense_fallback_max_size)
         if seed is not None:
             np.random.seed(seed)
         # Precompute
@@ -58,13 +62,15 @@ class BasGSSLasso:
         return soft_threshold(x - lam * self.gradf(x), lam * self.lambda_reg)
 
     # FBE at (x,λ) evaluated at z = T_λ(x)
-    def fbe(self, x, lam, z=None, gradfx=None):
+    def fbe(self, x, lam, z=None, gradfx=None, fx=None):
         if z is None:
             z = self.T(x, lam)
         if gradfx is None:
             gradfx = self.gradf(x)
+        if fx is None:
+            fx = self.f(x)
         eta = 0.5 / lam * np.linalg.norm(z - x) ** 2
-        return self.f(x) + np.dot(gradfx, z - x) + eta + self.g(z), eta
+        return fx + np.dot(gradfx, z - x) + eta + self.g(z), eta
 
     # ---------------------------
     # CG solver for (A_S^T A_S) s_S = rhs, without forming A_S^T A_S
@@ -79,13 +85,19 @@ class BasGSSLasso:
             return np.zeros_like(rhs), {"converged": True, "iters": 0, "res_norm": 0.0}
 
         A_S = self.A[:, S]  # shape (m, |S|)
-        # matvec: v -> A_S^T (A_S v)
+        ridge = max(0.0, self.cg_ridge)
+        # matvec: v -> A_S^T (A_S v) + ridge v
         def matvec(v):
-            return A_S.T @ (A_S @ v)
+            out = A_S.T @ (A_S @ v)
+            if ridge > 0.0:
+                out = out + ridge * v
+            return out
 
         # Preconditioner (Jacobi) on AtA: diag = sum of column squares of A_S
         if self.cg_precond == 'jacobi':
             diag = np.sum(A_S * A_S, axis=0)  # |S|
+            if ridge > 0.0:
+                diag = diag + ridge
             # Guard against zeros (fully dependent columns / empty rows)
             diag = np.where(diag > 0, diag, 1.0)
             def M_inv(v):  # apply M^{-1}
@@ -158,12 +170,19 @@ class BasGSSLasso:
 
         # ---- CG solve on restricted normal equations ----
         s_S, info = self._cg_AtA_S(S, rhs)
-        if (not info.get("converged", False)) and np.isfinite(info.get("res_norm", np.inf)):
-            # Optional: light fallback if CG stalls (ill-conditioning / tiny |S|)
+        if (
+            (not info.get("converged", False))
+            and np.isfinite(info.get("res_norm", np.inf))
+            and S.size <= self.dense_fallback_max_size
+        ):
+            # Dense fallback is only reasonable for small active sets.  For
+            # large S it forms |S| x |S| Gram matrices and dominates runtime.
             try:
                 A_S = self.A[:, S]
-                # solve small system with lstsq as last resort
-                s_S, *_ = np.linalg.lstsq(A_S.T @ A_S, rhs, rcond=None)
+                gram = A_S.T @ A_S
+                if self.cg_ridge > 0.0:
+                    gram = gram + self.cg_ridge * np.eye(S.size)
+                s_S, *_ = np.linalg.lstsq(gram, rhs, rcond=None)
             except np.linalg.LinAlgError:
                 pass  # keep CG output
 
@@ -189,12 +208,14 @@ class BasGSSLasso:
         # Steps 1–2: backtrack λ until local-model inequality holds
         z = self.T(x, lam)
         gradfx = self.gradf(x)
-        fbe_x, eta = self.fbe(x, lam, z=z, gradfx=gradfx)
-        while self.f(z) > (self.f(x) + np.dot(gradfx, z - x) + self.alpha * eta):
+        fx = self.f(x)
+        fbe_x, eta = self.fbe(x, lam, z=z, gradfx=gradfx, fx=fx)
+        while self.f(z) > (fx + np.dot(gradfx, z - x) + self.alpha * eta):
             lam *= 0.5
             z = self.T(x, lam)
             gradfx = self.gradf(x)
-            fbe_x, eta = self.fbe(x, lam, z=z, gradfx=gradfx)
+            fx = self.f(x)
+            fbe_x, eta = self.fbe(x, lam, z=z, gradfx=gradfx, fx=fx)
 
         # Init residual, typical magnitudes
         r = (1.0 + 1.0 / lam) * np.linalg.norm(x - z)
@@ -242,11 +263,13 @@ class BasGSSLasso:
             lam_new = lam
             z_new = self.T(x_new, lam_new)
             gradfx_new = self.gradf(x_new)
-            fbe_new, eta_new = self.fbe(x_new, lam_new, z=z_new, gradfx=gradfx_new)
+            fx_new = self.f(x_new)
+            fbe_new, eta_new = self.fbe(
+                x_new, lam_new, z=z_new, gradfx=gradfx_new, fx=fx_new)
 
             # Backtracking on τ and/or λ
             while (fbe_new > fbe_x - self.beta * (1.0 - self.alpha) * eta) or \
-                  (self.f(z_new) > (self.f(x_new) + np.dot(gradfx_new, z_new - x_new) + self.alpha * eta_new)):
+                  (self.f(z_new) > (fx_new + np.dot(gradfx_new, z_new - x_new) + self.alpha * eta_new)):
 
                 if (fbe_new > fbe_x - self.beta * (1.0 - self.alpha) * eta):
                     tau *= 0.5
@@ -256,23 +279,27 @@ class BasGSSLasso:
 
                 z_new = self.T(x_new, lam_new)
                 gradfx_new = self.gradf(x_new)
-                fbe_new, eta_new = self.fbe(x_new, lam_new, z=z_new, gradfx=gradfx_new)
+                fx_new = self.f(x_new)
+                fbe_new, eta_new = self.fbe(
+                    x_new, lam_new, z=z_new, gradfx=gradfx_new, fx=fx_new)
 
             # Accept
             x, z, lam = x_new, z_new, lam_new
             fbe_x, eta = fbe_new, eta_new
             gradfx = self.gradf(x)
-            print('iter', i, 'cost', self.f(x) + self.g(x))
+            fx = self.f(x)
+            if self.verbose:
+                print('iter', i, 'cost', fx + self.g(x))
 
             # Step 7: λ growth (BaGSS)
-            while (self.f(z) <= (self.f(x) + np.dot(gradfx, z - x)) + self.sigma * self.alpha * eta) \
+            while (self.f(z) <= (fx + np.dot(gradfx, z - x)) + self.sigma * self.alpha * eta) \
                   and (2.0 * lam <= self.lambda_bar):
 
                 lam_trial = 2.0 * lam
                 z_trial   = self.T(x, lam_trial)
                 eta_trial = 0.5 / lam_trial * np.linalg.norm(z_trial - x)**2
 
-                if self.f(z_trial) > (self.f(x) + np.dot(gradfx, z_trial - x)) + self.alpha * eta_trial:
+                if self.f(z_trial) > (fx + np.dot(gradfx, z_trial - x)) + self.alpha * eta_trial:
                     break
                 else:
                     lam = lam_trial

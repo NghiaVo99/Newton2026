@@ -57,6 +57,7 @@ def classic_lasso_ssnal(Ainput, b, n, lam, options, y=None, xi=None, x=None):
     Ascale     = options.get('Ascale', 0)
     orgojbconst = options.get('orgojbconst', 0)
     approx_sol = options.get('approx_sol',0)
+    record_history = bool(options.get('record_history', printyes))
 
     # 2) Print header (if requested)
     if printyes:
@@ -92,10 +93,18 @@ def classic_lasso_ssnal(Ainput, b, n, lam, options, y=None, xi=None, x=None):
             print(f" time for scaling A  = 0.0 (stub)")
 
     # 5) Initialize x, xi, y if not provided
-    if x is None or xi is None or y is None:
-        x  = np.zeros(n)
+    if x is None:
+        x = np.zeros(n)
+    else:
+        x = np.asarray(x, dtype=float).reshape(-1).copy()
+    if xi is None:
         xi = np.zeros(m)
-        y  = np.zeros(n)
+    else:
+        xi = np.asarray(xi, dtype=float).reshape(-1).copy()
+    if y is None:
+        y = np.zeros(n)
+    else:
+        y = np.asarray(y, dtype=float).reshape(-1).copy()
 
     # 6) Build the parmain dictionary
     parmain = {
@@ -109,6 +118,7 @@ def classic_lasso_ssnal(Ainput, b, n, lam, options, y=None, xi=None, x=None):
         'Lip':       Lip,
         'maxiter':   maxiter,
         'printyes':  printyes,
+        'record_history': record_history,
         'rescale':   rescale,
         'stoptol':   stoptol,
         'tstart':    time.time(),       # or 0.0

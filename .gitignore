@@ -5,3 +5,5 @@
 __pycache__/
 __cache__/
 src/lasso/comparison_GESN_included.py
+
+Accelerating_proximal_gradient_method_with_effective_subspaces_Newton_direction_for_polyhedral_regularization.pdf

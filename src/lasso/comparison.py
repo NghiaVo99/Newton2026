@@ -111,13 +111,6 @@ time_k_BaGSS = result_BaGSS["history"]["time"]
 x_SSNAL, cost_SSNAL, x_hist_SSNAL, time_k10 = test_ClassicLasso_random_wrapper(A, b_new, x0, alpha, max_iter, step_size, beta, newton_stepsize, tol, approx_sol)
 x_hist_SSNAL = np.linalg.norm(x_hist_SSNAL - approx_sol, axis=1)
 
-# print(f'Newton_ISTA converged in {i1} iterations')
-# print(f'Newton_BT_ISTA converged in {i11} iterations')
-# print(f'Newton_FISTA converged in {i2} iterations')
-# print(f'ISTA converged in {i3} iterations')
-# print(f'FISTA converged in {i4} iterations')
-# print(f'Newton_BT_FISTA (mod) converged in {i2_mod} iterations')
-
 # Use the *noisy* problem for the optimal cost reference
 #optimal_cost = cost_infinity(A, approx_sol, b_new, alpha)
 # optimal_cost = cost_lasso(A, approx_sol, b_new, alpha)

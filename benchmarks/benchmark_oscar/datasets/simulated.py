@@ -10,7 +10,7 @@ class Dataset(BaseDataset):
         "n_features": [1_000, 20_000, 2_000_000],
         "n_signals": [40, 20],
         "X_density": [1.0, 0.001],
-        "rho": [0, 0.8],
+        "rho": [0, 0.6, 0.8],
     }
 
     install_cmd = "conda"

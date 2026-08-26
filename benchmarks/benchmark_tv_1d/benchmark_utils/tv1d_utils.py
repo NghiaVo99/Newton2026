@@ -16,14 +16,20 @@ from src.Gen_lasso.Gen_Lasso_utils import cost_generalized_lasso
 from src.Gen_lasso.Gen_Lasso_utils import inactive_tv_constraint_indices
 from src.Gen_lasso.Gen_Lasso_utils import make_forward_diff
 from src.Gen_lasso.Gen_Lasso_utils import sub_problem_gen_lasso
+from benchmarks.paper_settings import NEWTON_BACKTRACK_SHRINK
+from benchmarks.paper_settings import NEWTON_INITIAL_STEP
+from benchmarks.paper_settings import NEWTON_MAX_BACKTRACKS
+from benchmarks.paper_settings import NEWTON_REJECT_COOLDOWN
+from benchmarks.paper_settings import NEWTON_STABILITY_TOL
+from benchmarks.paper_settings import NEWTON_TRIGGER_STEPS
 
-DEFAULT_BT_BETA = 0.5
-DEFAULT_NEWTON_STEP = 1.0
-DEFAULT_NEWTON_TRIGGER_STEPS = 3
-DEFAULT_ISTA_NEWTON_TOL = 1e-2
-DEFAULT_FISTA_NEWTON_TOL = 1e-2
-DEFAULT_NEWTON_REJECT_COOLDOWN = 8
-DEFAULT_MAX_NEWTON_BACKTRACKS = 25
+DEFAULT_BT_BETA = NEWTON_BACKTRACK_SHRINK
+DEFAULT_NEWTON_STEP = NEWTON_INITIAL_STEP
+DEFAULT_NEWTON_TRIGGER_STEPS = NEWTON_TRIGGER_STEPS
+DEFAULT_ISTA_NEWTON_TOL = NEWTON_STABILITY_TOL
+DEFAULT_FISTA_NEWTON_TOL = NEWTON_STABILITY_TOL
+DEFAULT_NEWTON_REJECT_COOLDOWN = NEWTON_REJECT_COOLDOWN
+DEFAULT_MAX_NEWTON_BACKTRACKS = NEWTON_MAX_BACKTRACKS
 NO_EARLY_STOP_TOL = -1.0
 MAX_DENSE_ELEMENTS = 5_000_000
 TV_PROX_NITER = 100
@@ -206,19 +212,10 @@ def dense_tv_newton_subproblem(A, yk, zk, b, alpha, *, gram=None):
     return np.asarray(d, dtype=float)
 
 
-def make_cached_tv_subproblem_solver(A, *, use_gurobi_fallback=False):
-    A = np.asarray(A, dtype=float)
-    gram = A.T @ A
-
+def make_cached_tv_subproblem_solver(A):
+    """Return the Gurobi Newton subproblem used by the paper benchmarks."""
     def _solver(A_arg, yk, zk, b, alpha):
-        try:
-            return dense_tv_newton_subproblem(
-                A, yk, zk, b, alpha, gram=gram
-            )
-        except Exception:
-            if not use_gurobi_fallback:
-                raise
-            return sub_problem_gen_lasso(A, yk, zk, b, alpha, silent=True)
+        return sub_problem_gen_lasso(A_arg, yk, zk, b, alpha, silent=True)
 
     return _solver
 

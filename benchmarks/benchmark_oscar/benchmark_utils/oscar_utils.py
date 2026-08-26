@@ -22,15 +22,22 @@ from src.OSCAR.OSCAR_ultils_v1 import cost_oscar
 from src.OSCAR.OSCAR_ultils_v1 import grad_f
 from src.OSCAR.OSCAR_ultils_v1 import prox_oscar
 from src.OSCAR.OSCAR_ultils_v1 import sub_problem_oscar
+from benchmarks.paper_settings import NEWTON_BACKTRACK_SHRINK
+from benchmarks.paper_settings import NEWTON_INITIAL_STEP
+from benchmarks.paper_settings import NEWTON_MAX_BACKTRACKS
+from benchmarks.paper_settings import NEWTON_REJECT_COOLDOWN
+from benchmarks.paper_settings import NEWTON_REJECT_STREAK_TRIGGER
+from benchmarks.paper_settings import NEWTON_STABILITY_TOL
+from benchmarks.paper_settings import NEWTON_TRIGGER_STEPS
 
-DEFAULT_BT_BETA = 0.5
-DEFAULT_NEWTON_STEP = 1.0
-DEFAULT_NEWTON_TRIGGER_STEPS = 2
-DEFAULT_ISTA_NEWTON_TOL = 3e-2
-DEFAULT_FISTA_NEWTON_TOL = 1e-2
-DEFAULT_NEWTON_REJECT_STREAK_TRIGGER = 2
-DEFAULT_NEWTON_REJECT_COOLDOWN = 8
-DEFAULT_MAX_NEWTON_BACKTRACKS = 25
+DEFAULT_BT_BETA = NEWTON_BACKTRACK_SHRINK
+DEFAULT_NEWTON_STEP = NEWTON_INITIAL_STEP
+DEFAULT_NEWTON_TRIGGER_STEPS = NEWTON_TRIGGER_STEPS
+DEFAULT_ISTA_NEWTON_TOL = NEWTON_STABILITY_TOL
+DEFAULT_FISTA_NEWTON_TOL = NEWTON_STABILITY_TOL
+DEFAULT_NEWTON_REJECT_STREAK_TRIGGER = NEWTON_REJECT_STREAK_TRIGGER
+DEFAULT_NEWTON_REJECT_COOLDOWN = NEWTON_REJECT_COOLDOWN
+DEFAULT_MAX_NEWTON_BACKTRACKS = NEWTON_MAX_BACKTRACKS
 DEFAULT_COEF_CLEANUP_TOLS = (1e-8, 3e-8, 1e-7, 3e-7, 1e-6, 3e-6, 1e-5)
 NO_EARLY_STOP_TOL = -1.0
 
@@ -194,9 +201,6 @@ def _make_cached_subproblem_solver(X):
     cache = {"H": None}
 
     def _solver(A, yk, zk, b, w1, w2):
-        d = fast_oscar_newton_subproblem(A, yk, zk, b, w1, w2)
-        if d is not None:
-            return d
         if cache["H"] is None:
             cache["H"] = A.T @ A
         return sub_problem_oscar(A, yk, zk, b, w1, w2, H=cache["H"], silent=True)

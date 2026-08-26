@@ -1,0 +1,21 @@
+{
+  "objective": [
+    "TV1D[data_fit=quad,delta=0,reg=0.1]",
+    "TV1D[data_fit=quad,delta=0,reg=0.01]"
+  ],
+  "dataset": [
+    "Simulated[n_samples=500,n_features=1000,n_blocks=10,loc=0,scale=0.1,type_A=random,type_x=block,type_n=gaussian,random_state=27]"
+  ],
+  "solver": [
+    "Celer synthesis",
+    "Primal PGD analysis[alpha=1.0,use_acceleration=False]",
+    "Primal PGD analysis[alpha=1.0,use_acceleration=True]",
+    "newton_ista",
+    "newton_fista",
+    "skglm synthesis"
+  ],
+  "n-repetitions": 1,
+  "timeout": 120,
+  "max-runs": 50,
+  "seed": 0
+}

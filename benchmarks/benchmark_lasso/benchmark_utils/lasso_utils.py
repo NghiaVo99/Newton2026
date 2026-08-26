@@ -18,22 +18,29 @@ from src.lasso.newton_lasso import ISTA
 from src.lasso.utils_lasso import cost_lasso
 from src.lasso.utils_lasso import dense_lasso_newton_subproblem
 from src.lasso.utils_lasso import grad_f
-from src.lasso.utils_lasso import lasso_newton_subproblem as _shared_lasso_newton_subproblem
 from src.lasso.utils_lasso import lipschitz_exact
 from src.lasso.utils_lasso import proxL1
+from src.lasso.utils_lasso import sub_problem_of_lasso
+from benchmarks.paper_settings import NEWTON_BACKTRACK_SHRINK
+from benchmarks.paper_settings import NEWTON_INITIAL_STEP
+from benchmarks.paper_settings import NEWTON_MAX_BACKTRACKS
+from benchmarks.paper_settings import NEWTON_REJECT_COOLDOWN
+from benchmarks.paper_settings import NEWTON_REJECT_STREAK_TRIGGER
+from benchmarks.paper_settings import NEWTON_STABILITY_TOL
+from benchmarks.paper_settings import NEWTON_SUBPROBLEM_SOLVER
+from benchmarks.paper_settings import NEWTON_TRIGGER_STEPS
 
 
-DEFAULT_BT_BETA = 0.5
-DEFAULT_NEWTON_STEP = 1.0
-DEFAULT_NEWTON_TRIGGER_STEPS = 2
-# Keep separate Newton activation defaults for ISTA and FISTA wrappers:
-# the FISTA variant should mirror the original comparison script more closely,
-# while the ISTA variant benefits from an earlier trigger in short Benchopt runs.
-DEFAULT_ISTA_NEWTON_TOL = 1e-2
-# On the (500, 600) simulated benchmark, 1e-3 delays the Newton phase too much.
-DEFAULT_FISTA_NEWTON_TOL = 1e-2
+DEFAULT_BT_BETA = NEWTON_BACKTRACK_SHRINK
+DEFAULT_NEWTON_STEP = NEWTON_INITIAL_STEP
+DEFAULT_NEWTON_TRIGGER_STEPS = NEWTON_TRIGGER_STEPS
+DEFAULT_NEWTON_REJECT_STREAK_TRIGGER = NEWTON_REJECT_STREAK_TRIGGER
+DEFAULT_NEWTON_REJECT_COOLDOWN = NEWTON_REJECT_COOLDOWN
+DEFAULT_MAX_NEWTON_BACKTRACKS = NEWTON_MAX_BACKTRACKS
+DEFAULT_ISTA_NEWTON_TOL = NEWTON_STABILITY_TOL
+DEFAULT_FISTA_NEWTON_TOL = NEWTON_STABILITY_TOL
 NO_EARLY_STOP_TOL = -1.0
-USE_GUROBI_NEWTON_SUBPROBLEM = False
+USE_GUROBI_NEWTON_SUBPROBLEM = NEWTON_SUBPROBLEM_SOLVER == "gurobi"
 
 
 def soft_threshold(x, lam):
@@ -52,9 +59,11 @@ def compute_step_size(X):
 
 
 def lasso_newton_subproblem(A, x, y, b, alpha):
-    return _shared_lasso_newton_subproblem(
-        A, x, y, b, alpha, use_gurobi=USE_GUROBI_NEWTON_SUBPROBLEM
-    )
+    if not USE_GUROBI_NEWTON_SUBPROBLEM:
+        raise RuntimeError(
+            "The paper benchmark requires Gurobi for Newton subproblems."
+        )
+    return sub_problem_of_lasso(A, x, y, b, alpha)
 
 
 def _run_without_stdout(func, *args, **kwargs):
@@ -179,6 +188,9 @@ def run_newton_bt_ista(X, y, lmbd, n_iter):
         DEFAULT_ISTA_NEWTON_TOL,
         0,
         DEFAULT_NEWTON_TRIGGER_STEPS,
+        DEFAULT_NEWTON_REJECT_STREAK_TRIGGER,
+        DEFAULT_NEWTON_REJECT_COOLDOWN,
+        DEFAULT_MAX_NEWTON_BACKTRACKS,
         verbose=False,
     )
     return np.asarray(beta, dtype=float)
@@ -205,6 +217,9 @@ def run_newton_ista(X, y, lmbd, n_iter):
         DEFAULT_ISTA_NEWTON_TOL,
         0,
         DEFAULT_NEWTON_TRIGGER_STEPS,
+        DEFAULT_NEWTON_REJECT_STREAK_TRIGGER,
+        DEFAULT_NEWTON_REJECT_COOLDOWN,
+        DEFAULT_MAX_NEWTON_BACKTRACKS,
         verbose=False,
     )
     return np.asarray(beta, dtype=float)
@@ -229,6 +244,9 @@ def run_newton_bt_fista(X, y, lmbd, n_iter):
         DEFAULT_FISTA_NEWTON_TOL,
         0,
         DEFAULT_NEWTON_TRIGGER_STEPS,
+        DEFAULT_NEWTON_REJECT_STREAK_TRIGGER,
+        DEFAULT_NEWTON_REJECT_COOLDOWN,
+        DEFAULT_MAX_NEWTON_BACKTRACKS,
         verbose=False,
     )
     return np.asarray(beta, dtype=float)
@@ -255,6 +273,9 @@ def run_newton_fista(X, y, lmbd, n_iter):
         DEFAULT_FISTA_NEWTON_TOL,
         0,
         DEFAULT_NEWTON_TRIGGER_STEPS,
+        DEFAULT_NEWTON_REJECT_STREAK_TRIGGER,
+        DEFAULT_NEWTON_REJECT_COOLDOWN,
+        DEFAULT_MAX_NEWTON_BACKTRACKS,
         verbose=False,
     )
     return np.asarray(beta, dtype=float)

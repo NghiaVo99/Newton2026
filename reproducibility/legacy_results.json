@@ -1,0 +1,58 @@
+{
+  "paper_source": "Newton_s_method__Copy_ (4).pdf, generated 2026-08-26",
+  "legacy_result_commits": {
+    "010d9ad7ac482999cc29583b07eb8da064db6447": "first commit containing the April Lasso and OSCAR benchmark artifacts",
+    "a9b6e7d5bcb50aae65f81b07a06a74fc6748808a": "first commit containing the final April Lasso and TV-1D benchmark artifacts",
+    "7647e6c2a3972c557737cacb3b231e1ed3cff6a8": "first commit containing the final assembled Lasso and TV plot images"
+  },
+  "legacy_artifacts": [
+    {
+      "paper_items": ["Table 1", "Figure 5"],
+      "case": "reg=0.1,rho=0",
+      "path": "benchmarks/benchmark_lasso/outputs/benchopt_run_2026-04-22_16h05m16.parquet",
+      "sha256": "c8ee2ab61352324aa6a597bd40da33fa17e3511f1a9bee7b2ba7623bbf60638d"
+    },
+    {
+      "paper_items": ["Table 1", "Figure 5"],
+      "case": "reg=0.1,rho=0.6",
+      "path": "benchmarks/benchmark_lasso/outputs/benchopt_run_2026-04-22_15h36m11.parquet",
+      "sha256": "4ef1fd3449520311a068995757dcb47943430640f120d76ea4aa7a09ba087f77"
+    },
+    {
+      "paper_items": ["Table 1", "Figure 5"],
+      "case": "reg=0.01,rho=0",
+      "path": "benchmarks/benchmark_lasso/outputs/benchopt_run_2026-04-28_17h21m52.parquet",
+      "sha256": "2725f83eb33af2ca97be5c38fe76597508254dec8d599877aa66744c9817e7cd"
+    },
+    {
+      "paper_items": ["Table 1", "Figure 5"],
+      "case": "reg=0.01,rho=0.6",
+      "path": "benchmarks/benchmark_lasso/outputs/benchopt_run_2026-04-28_17h24m34.parquet",
+      "sha256": "2fcc2a300045041c3a93d11209eba44b86693f23771abbe986feac691fa698d6"
+    },
+    {
+      "paper_items": ["Table 2", "Figure 6"],
+      "case": "w1=1e-3,w2=1e-4,rho=0",
+      "path": "benchmarks/benchmark_oscar/outputs/benchopt_run_2026-04-26_22h39m46.parquet",
+      "sha256": "7240f15c8b57504e0c8778b8e07ddad959acaaa977b582fdecae0c4ef9251a7c"
+    },
+    {
+      "paper_items": ["Table 2", "Figure 6"],
+      "case": "w1=1e-3,w2=1e-4,rho=0.8 (manuscript labels rho=0.6)",
+      "path": "benchmarks/benchmark_oscar/outputs/benchopt_run_2026-04-26_22h43m10.parquet",
+      "sha256": "056ceffe14f0df870495ce35428b9ac701059ecfd00723d876bb973582bde096"
+    },
+    {
+      "paper_items": ["Table 3", "Figure 7"],
+      "case": "reg=0.1",
+      "path": "benchmarks/benchmark_tv_1d/outputs/benchopt_run_2026-04-27_15h46m26.parquet",
+      "sha256": "eabbf678b037b348d67a0fcf486c2915258c8bed744d63b3801377d8d5d42eca"
+    },
+    {
+      "paper_items": ["Table 3", "Figure 7"],
+      "case": "reg=0.01",
+      "path": "benchmarks/benchmark_tv_1d/outputs/benchopt_run_2026-04-27_15h57m58.parquet",
+      "sha256": "e6a1b1bdfd4befc7e8f8b25671fed1124f3074587802103818489decd66eeaa2"
+    }
+  ]
+}

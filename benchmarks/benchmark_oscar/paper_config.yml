@@ -1,0 +1,21 @@
+{
+  "objective": [
+    "OSCAR Regression[w1=1e-3,w2=1e-4,fit_intercept=False]"
+  ],
+  "dataset": [
+    "Simulated[n_samples=500,n_features=1000,n_signals=20,X_density=1.0,rho=0]",
+    "Simulated[n_samples=500,n_features=1000,n_signals=20,X_density=1.0,rho=0.6]"
+  ],
+  "solver": [
+    "ADMM[adaptive_rho=True,rho=10]",
+    "Newt-ALM[inner_solver=auto]",
+    "PGD[acceleration=fista,prox=prox_isotonic]",
+    "PGD[acceleration=none,prox=prox_isotonic]",
+    "newton_ista",
+    "newton_fista"
+  ],
+  "n-repetitions": 1,
+  "timeout": 120,
+  "max-runs": 50,
+  "seed": 0
+}

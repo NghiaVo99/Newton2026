@@ -379,7 +379,8 @@ def estimate_background_scalar(b_map):
 def make_problem(psf_hr, scale, z_lr_2d, b, x0_mode="backproj", noisy_init_hr=None):
     """
     x0_mode:
-        "backproj"     -> x0 = A^T(max(z - b, 0))
+        "paper_backproj" -> x0 = H^T M^T z = A^T z (Section 5.4)
+        "backproj"     -> x0 = A^T(max(z - b, 0)) (legacy)
         "noisy_lr"     -> x0 = M^T(max(z - b, 0))      (uniform unbin only)
         "noisy_hr"     -> x0 = max(noisy_init_hr, 0)   (caller provides HR image)
     """
@@ -396,7 +397,10 @@ def make_problem(psf_hr, scale, z_lr_2d, b, x0_mode="backproj", noisy_init_hr=No
     g      = lambda x, lam: g_val(x, lam)
 
     # ----- x0 selection -----
-    if x0_mode == "backproj":
+    if x0_mode == "paper_backproj":
+        x0 = AT(z_vec)
+
+    elif x0_mode == "backproj":
         # original choice (A^T back-projection)
         x0 = init_x0(AT, z_vec, b=b_vec)
 
@@ -415,7 +419,10 @@ def make_problem(psf_hr, scale, z_lr_2d, b, x0_mode="backproj", noisy_init_hr=No
         x0 = np.maximum(0.0, im2vec(X0))
 
     else:
-        raise ValueError("x0_mode must be one of {'backproj','noisy_lr','noisy_hr'}.")
+        raise ValueError(
+            "x0_mode must be one of "
+            "{'paper_backproj','backproj','noisy_lr','noisy_hr'}."
+        )
 
     return dict(
         f=f, grad_f=grad_f, g=g, prox_g=prox,
@@ -447,7 +454,6 @@ def lambda_max(A, AT, z, b, eps=1e-12):
     b = np.asarray(b, float).ravel()
     grad0 = AT(1.0 - z/np.maximum(b, eps))   # ∇f(0)
     return float(np.max(np.maximum(grad0, 0.0)))
-
 
 
 

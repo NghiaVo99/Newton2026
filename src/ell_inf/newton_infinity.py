@@ -5,6 +5,9 @@ import cvxpy as cp
 import gurobipy as gp
 from gurobipy import GRB
 import matplotlib.pyplot as plt
+from benchmarks import paper_settings
+import src.lasso.newton_lasso as shared_newton
+from src.lasso import untils_infinity as infinity_utils
 
 
 
@@ -694,25 +697,27 @@ def Hybrid_Fista_ista(A,b,x0,alpha,max_iter, beta, newton_stepsize, tol, approx_
   return cost_val, x, d_norm, i, x_k, time_list
 
 
-m = 63
-n = 64
-#np.random.seed(42)
+paper_case = paper_settings.FIGURE_2_INFINITY
+m = paper_case["n_samples"]
+n = paper_case["n_features"]
+rng = np.random.default_rng(paper_settings.SYNTHETIC_SEED)
 z = np.zeros(n) #create z with full zeros before assignment
-sparsity = 8
-nonzero_indices = np.random.choice(n, sparsity, replace=False)
+sparsity = paper_case["n_maximum_entries"]
+nonzero_indices = rng.choice(n, sparsity, replace=False)
 z[nonzero_indices] = np.ones(sparsity)
 
-A = np.random.randn(m,n)
+A = rng.normal(size=(m, n))
 step_size = 1/(np.linalg.norm(A,2)**2)
 
-beta, newton_stepsize = 0.5, 1
-tol = 1e-7
+beta = paper_settings.NEWTON_BACKTRACK_SHRINK
+newton_stepsize = paper_settings.NEWTON_INITIAL_STEP
+tol = paper_settings.KKT_TOL
+newt_tol = paper_settings.NEWTON_STABILITY_TOL
 b = A@z
-noise = np.random.randn(m) * 0.001 #sigma = 0.01
+noise = rng.normal(scale=np.sqrt(paper_case["noise_variance"]), size=m)
 b_new = b + noise
-#alpha = 0.1*np.linalg.norm(A.T @ b_new,np.inf)
-alpha = 1
-max_iter = 800
+alpha = paper_case["lambda_c"] * np.linalg.norm(A.T @ b_new, np.inf)
+max_iter = paper_settings.MAX_ITER
 x0 = np.zeros(n)
 
 # z = np.array([0,1,0])
@@ -730,18 +735,31 @@ step_size = 1/np.linalg.norm(A,2)**2
 # tol = 1e-5
 # x0 = np.array([5,5,5])
 
-approx_sol = solve_infinity_cvxpy(A,b_new,alpha)
-cost_val_newton_ista, x1, d_norm1, i1, x_k1, time_k1 = Algo_Newton_Ista(A,b_new,x0, alpha, max_iter, step_size, beta, newton_stepsize, tol, approx_sol)
-cost_val_newton_fista, x2, d_norm2, i2, x_k2 = Algo_Newton_Fista(A,b_new,x0, alpha, max_iter, step_size, beta, newton_stepsize, tol, approx_sol)
-cost_val_ista, x3, i3, x_k3, time_k3 = ISTA(A,b_new,x0,alpha, max_iter, step_size, tol, approx_sol)
-cost_val_fista, x4, i4, x_k4, time_k4 = FISTA1(A,b_new,x0,alpha, max_iter, step_size, approx_sol)
+approx_sol, optimal_cost = infinity_utils.solve_infinity_gurobi(A, b_new, alpha)
+cost_val_newton_ista, x1, i1, x_k1, time_k1 = shared_newton.Algo_Newton_Ista(
+    A, b_new, x0, alpha, max_iter, step_size, beta, newton_stepsize, tol,
+    infinity_utils.cost_infinity, infinity_utils.ProxL_infinity,
+    infinity_utils.sub_problem_of_infinity, newt_tol, approx_sol,
+)
+cost_val_newton_fista, x2, i2, x_k2, time_k2 = shared_newton.Algo_Newton_Fista_new(
+    A, b_new, x0, alpha, max_iter, step_size, beta, newton_stepsize, tol,
+    infinity_utils.cost_infinity, infinity_utils.ProxL_infinity,
+    infinity_utils.sub_problem_of_infinity, newt_tol, approx_sol,
+)
+cost_val_ista, x3, i3, x_k3, time_k3 = shared_newton.ISTA(
+    A, b_new, x0, alpha, max_iter, step_size, tol,
+    infinity_utils.cost_infinity, infinity_utils.ProxL_infinity, approx_sol,
+)
+cost_val_fista, x4, i4, x_k4, time_k4 = shared_newton.FISTA1(
+    A, b_new, x0, alpha, max_iter, step_size, tol,
+    infinity_utils.cost_infinity, infinity_utils.ProxL_infinity, approx_sol,
+)
 
 
 print(f'Algo_Newton_Ista converge in {i1} iteration')
 print(f'Algo_Newton_Fista converge in {i2} iteration')
 print(f'Ista converge in {i3} iteration')
 print(f'Fista converge in {i4} iteration')
-optimal_cost = cost(A,approx_sol,b,alpha)
 
 fig, axs = plt.subplots(1, 2, figsize=(20, 5))
 

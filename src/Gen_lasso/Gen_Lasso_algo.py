@@ -194,7 +194,7 @@ def BT_FISTA1(A, D, b, x0, alpha, max_iter, tol, cost, prox, approx_sol = 0):
 
 def Algo_Newton_Ista(A,D,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, tol, cost,
                      prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
-                     newton_trigger_steps=1, newton_reject_cooldown=8,
+                     newton_trigger_steps=3, newton_reject_cooldown=8,
                      max_newton_backtracks=25, verbose=True):
   x = x0
   cost_val = [cost(A,x0,b,alpha,D)]
@@ -278,7 +278,7 @@ def Algo_Newton_Ista(A,D,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, 
 
 def Algo_Newton_BT_Ista(A,D,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cost,
                         prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
-                        newton_trigger_steps=1, newton_reject_cooldown=8,
+                        newton_trigger_steps=3, newton_reject_cooldown=8,
                         max_newton_backtracks=25, verbose=True):
   x = x0
   cost_val = [cost(A,x0,b,alpha,D)]
@@ -363,7 +363,7 @@ def Algo_Newton_BT_Ista(A,D,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cos
 
 def Algo_Newton_Fista_new(A,D,b,x0,alpha,max_iter, step_size, beta, newton_stepsize, tol, cost,
                           prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
-                          newton_trigger_steps=1, newton_reject_cooldown=8,
+                          newton_trigger_steps=3, newton_reject_cooldown=8,
                           max_newton_backtracks=25, verbose=True):
   x = x0
   z = x.copy()
@@ -435,7 +435,7 @@ def Algo_Newton_Fista_new(A,D,b,x0,alpha,max_iter, step_size, beta, newton_steps
       z = x.copy()
       x_old = x.copy()
     else:
-      t = (0.99 + np.sqrt(1 + 4*(t_old**2)))/2
+      t = (1 + np.sqrt(1 + 4*(t_old**2)))/2
       z = x + ((t_old - 1) / t) * (x - x_old)
       x_old = x
       t_old = t
@@ -458,7 +458,7 @@ def Algo_Newton_Fista_new(A,D,b,x0,alpha,max_iter, step_size, beta, newton_steps
 
 def Algo_Newton_BT_Fista_new(A,D,b,x0,alpha,max_iter, beta, newton_stepsize, tol, cost,
                              prox, subproblem_solver, newt_tol = 1e-3, approx_sol = 0,
-                             newton_trigger_steps=1, newton_reject_cooldown=8,
+                             newton_trigger_steps=3, newton_reject_cooldown=8,
                              max_newton_backtracks=25, verbose=True):
   x = x0
   z = x.copy()
@@ -532,7 +532,7 @@ def Algo_Newton_BT_Fista_new(A,D,b,x0,alpha,max_iter, beta, newton_stepsize, tol
       z = x.copy()
       x_old = x.copy()
     else:
-      t = (0.99 + np.sqrt(1 + 4*(t_old**2)))/2
+      t = (1 + np.sqrt(1 + 4*(t_old**2)))/2
       z = x + ((t_old - 1) / t) * (x - x_old)
       x_old = x
       t_old = t

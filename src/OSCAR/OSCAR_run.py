@@ -11,28 +11,39 @@ if str(REPO_ROOT) not in sys.path:
 from src.OSCAR.OSCAR_ultils_v1 import *
 from src.OSCAR.OSCAR_algo import *
 from src.OSCAR.SSNAL_OSCAR import *
+from benchmarks import paper_settings
 
 # m, n = 150, 300  # problem dimensions
-rng = np.random.default_rng(1)
+rng = np.random.default_rng(paper_settings.SYNTHETIC_SEED)
 # z = np.random.standard_normal(n)
 
 # # Design matrix and noisy observations
 # A = rng.standard_normal((m, n))
-n = 500
-A, b_new, x_true = build_test_problem(n=n, sigma2=0.01, rho=0.7, seed=1)
+paper_case = paper_settings.FIGURE_3_OSCAR
+m = paper_case["n_samples"]
+n = paper_case["n_features"]
+if m != n:
+    raise ValueError("The manuscript OSCAR generator requires m == n.")
+A, b_new, x_true = build_test_problem(
+    n=n,
+    sigma2=paper_case["noise_variance"],
+    rho=paper_case["rho"],
+    seed=paper_settings.SYNTHETIC_SEED,
+)
 
 step_size = 1.0 / (np.linalg.norm(A, 2) ** 2)
 #A = A / np.linalg.norm(A, 2)
-beta, newton_stepsize = 0.5, 1.0
-tol = 1e-8
-newt_tol = 1e-3
+beta = paper_settings.NEWTON_BACKTRACK_SHRINK
+newton_stepsize = paper_settings.NEWTON_INITIAL_STEP
+tol = paper_settings.KKT_TOL
+newt_tol = paper_settings.NEWTON_STABILITY_TOL
 print(np.linalg.norm(A.T @ b_new, np.inf))
 #w1 = 1e-6 * np.linalg.norm(A.T @ b_new, np.inf)
-w1 = 1e-5 * np.linalg.norm(A.T @ b_new, np.inf)
+w1 = paper_case["lambda_c"] * np.linalg.norm(A.T @ b_new, np.inf)
 #w1 = 0.2
 w2 = w1
 
-max_iter = 1000
+max_iter = paper_settings.MAX_ITER
 x0 = np.zeros(n)
 
 prox = prox_oscar

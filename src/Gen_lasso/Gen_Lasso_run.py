@@ -11,32 +11,43 @@ from matplotlib.ticker import ScalarFormatter
 import pyproximal
 from src.Gen_lasso.Gen_Lasso_utils import *
 from src.Gen_lasso.Gen_Lasso_algo import *
-from src.Gen_lasso.test_prob_gpt import generate_gen_lasso_toy
+from benchmarks import paper_settings
 
 
 # ────────────────────────────────────────────────────────────
 # Problem setup
 # ────────────────────────────────────────────────────────────
-m, n = 10, 100
-rng = np.random.default_rng(50)
+paper_case = paper_settings.FIGURE_4_TV
+m = paper_case["n_samples"]
+n = paper_case["n_features"]
+rng = np.random.default_rng(paper_settings.SYNTHETIC_SEED)
 D = make_forward_diff(n)
-data = generate_gen_lasso_toy(n=n, m=m, alpha=0.1, snr_db=25.0, seed=42)
-A, b_new, z, alpha = data["A"], data["b"], data["x_true"], data["alpha"]
+A = rng.normal(size=(m, n))
+z = np.repeat(
+    np.asarray(paper_case["block_values"], dtype=float),
+    paper_case["block_size"],
+)
+if z.size != n:
+    raise ValueError("The paper TV block specification must contain n entries.")
+b_new = A @ z + rng.normal(
+    scale=np.sqrt(paper_case["noise_variance"]), size=m
+)
 
 # z = rng.standard_normal(n)
 # A = rng.normal(size=(m, n)) / np.sqrt(m)
 # b_new = A @ z + 0.001 * rng.normal(size=m)
 
 step_size = 1.0 / (np.linalg.norm(A, 2) ** 2)
-beta, newton_stepsize = 0.5, 1.0
-tol = 1e-8
-newt_tol = 1e-2
+beta = paper_settings.NEWTON_BACKTRACK_SHRINK
+newton_stepsize = paper_settings.NEWTON_INITIAL_STEP
+tol = paper_settings.KKT_TOL
+newt_tol = paper_settings.NEWTON_STABILITY_TOL
 
-alpha_c = 0.5 * 1/np.linalg.norm(A.T @ b_new, np.inf)
+alpha_c = paper_case["lambda_c"]
 print('alpha_c', alpha_c)
 alpha = alpha_c * np.linalg.norm(A.T @ b_new, np.inf)
 #print('alpha', alpha)
-max_iter = 1000
+max_iter = paper_settings.MAX_ITER
 x0 = np.zeros(n)
 
 # The pyproximal.TV defaults (niter=10, rtol=1e-4) are too loose for

@@ -17,35 +17,39 @@ from src.lasso.lasso_GDNM import *
 from src.lasso.lasso_GDFBE_LM import *
 from src.lasso.test_ClassicLasso_random import *
 from src.lasso.BaGSS import BasGSSLasso
+from benchmarks import paper_settings
 
 
 # ────────────────────────────────────────────────────────────
 # Synthetic Problem setup
 # ────────────────────────────────────────────────────────────
-m, n = 2000, 6000
-rng = np.random.default_rng(42)
+paper_case = paper_settings.FIGURE_1_LASSO
+m = paper_case["n_samples"]
+n = paper_case["n_features"]
+rng = np.random.default_rng(paper_settings.SYNTHETIC_SEED)
 
 #z = np.random.rand(n)
 z = np.zeros(n)
-sparsity = 100
-nonzero_indices = np.random.choice(n, sparsity, replace=False)
+sparsity = paper_case["n_nonzero"]
+nonzero_indices = rng.choice(n, sparsity, replace=False)
 #z[nonzero_indices] = np.ones(sparsity)
-z[rng.choice(n, sparsity, replace=False)] = rng.normal(size=sparsity)
+z[nonzero_indices] = rng.normal(size=sparsity)
 
 A = rng.normal(size=(m, n)) 
 step_size = 1.0 / (np.linalg.norm(A, 2) ** 2)
-beta, newton_stepsize = 0.5, 1.0
-tol = 1e-8
-newt_tol = 1e-3
-x0 = rng.random(n)
+beta = paper_settings.NEWTON_BACKTRACK_SHRINK
+newton_stepsize = paper_settings.NEWTON_INITIAL_STEP
+tol = paper_settings.KKT_TOL
+newt_tol = paper_settings.NEWTON_STABILITY_TOL
+x0 = np.zeros(n)
 
 b = A @ z
-noise = rng.normal(scale=0.1, size=m)
+noise = rng.normal(scale=np.sqrt(paper_case["noise_variance"]), size=m)
 b_new = b + noise
 
-alpha_c = 1e-3
+alpha_c = paper_case["lambda_c"]
 alpha = alpha_c * np.linalg.norm(A.T @ b_new, np.inf)
-max_iter = 1000
+max_iter = paper_settings.MAX_ITER
 
 
 # prox = ProxL_infinity

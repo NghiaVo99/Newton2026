@@ -1,8 +1,8 @@
 # Paper benchmark reproducibility audit
 
-This document covers Tables 1-3 and Figures 5-7 in Section 5.3 of the
-manuscript. It records both the historical evidence and the corrected commands
-that must be used for the revised paper.
+This document covers every numerical item in the manuscript: Figures 1-9 and
+Tables 1-3. It records the historical evidence, the corrected configuration,
+and the exact command associated with each item.
 
 ## Audit conclusion
 
@@ -56,9 +56,34 @@ license:
 python reproducibility/verify_manifest.py --check-gurobi
 ```
 
+To also verify the exact reviewed manuscript file:
+
+```bash
+python reproducibility/verify_manifest.py --check-gurobi \
+  --manuscript "/path/to/Newton_s_method__Copy_ (4).pdf"
+```
+
+The machine-readable mapping is in
+`reproducibility/paper_run_manifest.json`; the reproducible environment is in
+`environment-paper.yml` and pins Python 3.12.7 and Benchopt 1.9.0.
+
+## Exact commands for Figures 1-4
+
+```bash
+python src/lasso/comparison.py
+python src/ell_inf/newton_infinity.py
+python src/OSCAR/OSCAR_run.py
+python src/Gen_lasso/Gen_Lasso_run.py
+```
+
+These drivers import the common safeguards and their problem-specific
+dimensions, regularization parameters, correlation, and noise variances from
+`benchmarks/paper_settings.py`. In particular, the scripts now use the square
+root of the stated variance as the Gaussian standard deviation.
+
 ## Exact commands for the revised results
 
-Use Benchopt 1.9.0 in the `benchopt-lasso` environment. Each command performs
+Use Benchopt 1.9.0 in the `newton2026-paper` environment. Each command performs
 one repetition with seed 0 and writes one named Parquet result. The HTML output
 from the same run supplies the corresponding figure.
 
@@ -90,26 +115,32 @@ Tables use the first measured time whose objective is within `1e-8` of the
 best objective reached by any included solver for that configuration. Figures
 plot objective suboptimality against iteration from those same Parquet files.
 
-## Tagging and archiving rule
+## Exact commands for Figures 8-9
 
-Do not tag the historical commits as if they matched the manuscript. After the
-three corrected commands finish:
+Figure 8 displays frames from the 361-image SMLM ISBI 2013 stack:
 
-1. commit the three named Parquet files, their generated HTML files, the exact
-   environment lock, and any manuscript tables or plots derived from them;
-2. run the verifier again on a clean checkout;
-3. create an annotated tag on that result commit; and
-4. push both the commit and the tag, then cite the tag URL and full commit SHA
-   in the manuscript and response letter.
+```bash
+python src/lasso/ISBI_viz.py
+```
 
-Suggested tag name: `paper-reproducibility-v1`. A release archive or Zenodo
-deposit should be created from that tag so the commit, configuration, result
-files, and environment remain immutable.
+Figure 9 uses all 361 checked-in frames, the 4x upsampling factor, 258.2 nm
+FWHM PSF, the paper initialization `H.T @ M.T @ y`, and
+`lambda = 0.5 * ||max(grad f(0), 0)||_inf`:
 
-## Remaining paper figures
+```bash
+python src/lasso/img_pipeline.py
+python src/lasso/tube_reconstruct.py
+```
 
-Figures 1-4 and 8-9 are driven by standalone scripts rather than the Benchopt
-configs above. Their current scripts do not all match the dimensions printed
-in the manuscript, so they must not be claimed as reproduced by the eventual
-tag until each is converted to a parameterized, noninteractive driver and its
-input data and output checksum are added to the manifest.
+## Scope of the final-review tag
+
+Do not tag the historical commits as if they matched the manuscript. The
+annotated tag `paper-reproducibility-v1` identifies the corrected and frozen
+code, configuration, input data, environment, and command manifest.
+
+At the authors' explicit request, the numerical experiments were not rerun for
+this final-review archive. Consequently, the existing Parquet, HTML, PNG, and
+TIFF outputs remain historical artifacts; the tag does not assert that they
+were regenerated from the corrected configuration. This limitation is encoded
+in `reproducibility/paper_run_manifest.json` so it cannot be lost when the
+repository is archived.

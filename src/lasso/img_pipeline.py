@@ -9,22 +9,32 @@ import pathlib
 from src.lasso.newton_poisson import *
 from src.lasso.Poisson_utils import *
 import imageio.v2 as imageio
+from benchmarks import paper_settings
 
-FOLDER = pathlib.Path("sequence")
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+FOLDER = SCRIPT_DIR / "sequence"
 files = sorted([
     *FOLDER.glob("*.tif"), *FOLDER.glob("*.tiff"),
     *FOLDER.glob("*.png"), *FOLDER.glob("*.jpg"), *FOLDER.glob("*.jpeg")
 ])
 
-scale = 4                      # upsampling
-lr_px_nm = 100
-hr_px_nm = lr_px_nm / scale    # 25 nm/pixel
+paper_case = paper_settings.FIGURES_8_9_POISSON
+if len(files) != paper_case["n_frames"]:
+    raise ValueError(
+        f"Expected {paper_case['n_frames']} SMLM ISBI frames, found {len(files)}."
+    )
+scale = paper_case["upsampling_factor"]
+lr_px_nm = paper_case["low_resolution_pixel_nm"]
+hr_px_nm = paper_case["high_resolution_pixel_nm"]
 
-psf_hr = gaussian_psf_hr_cel0(fwhm_nm=258.2, hr_px_nm=hr_px_nm, size=33)
-max_iter = 200
-beta, newton_stepsize = 0.5, 1.0
-tol = 1e-8
-newt_tol = 0.1
+psf_hr = gaussian_psf_hr_cel0(
+    fwhm_nm=paper_case["psf_fwhm_nm"], hr_px_nm=hr_px_nm, size=33
+)
+max_iter = paper_settings.MAX_ITER
+beta = paper_settings.NEWTON_BACKTRACK_SHRINK
+newton_stepsize = paper_settings.NEWTON_INITIAL_STEP
+tol = paper_settings.KKT_TOL
+newt_tol = paper_settings.NEWTON_STABILITY_TOL
 
 b_map = estimate_background_from_stack(files, pattern="*.tif", method="median")
 b_map = np.maximum(np.asarray(b_map, np.float64), 1e-12)
@@ -35,7 +45,7 @@ b_vec = b_map.ravel()
 # ────────────────────────────────────────────────────────────
 # Batch reconstruction over the whole sequence (no input changes)
 # ────────────────────────────────────────────────────────────
-OUTPUT_DIR = pathlib.Path("reconstructed")
+OUTPUT_DIR = SCRIPT_DIR / "reconstructed"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def read_image_as_is(p):
@@ -65,7 +75,7 @@ for idx, f in enumerate(files, start=1):
         scale=scale,
         z_lr_2d=np.asarray(z_lr, dtype=np.float64),
         b=b_vec,                       # pass the vectorized map
-        x0_mode="backproj"
+        x0_mode="paper_backproj"
     )
 
     x0      = ops["x0"]
@@ -76,7 +86,7 @@ for idx, f in enumerate(files, start=1):
 
     lam_max = lambda_max(ops["A"], ops["AT"], ops["z"], ops["b"])
     print("lambda_max =", lam_max)
-    alpha = 0.5*lam_max
+    alpha = paper_case["lambda_fraction"] * lam_max
 
     subproblem_solver = sub_problem_of_poisson
     cost = cost_poisson
@@ -85,7 +95,11 @@ for idx, f in enumerate(files, start=1):
     # Run your Newton-BT-FISTA (same as single-image call)
     cost_val_newton_bt_fista, x_rec_vec, i6, x_k6, time_k6 = Algo_Newton_BT_Fista_new(A,AT,b_vec,x0, noisy_z,
                             alpha,max_iter, beta, newton_stepsize, tol, cost,
-                            prox, subproblem_solver, newt_tol = newt_tol, approx_sol = approx_sol)
+                            prox, subproblem_solver, newt_tol=newt_tol,
+                            approx_sol=approx_sol,
+                            newton_trigger_steps=paper_settings.NEWTON_TRIGGER_STEPS,
+                            newton_reject_cooldown=paper_settings.NEWTON_REJECT_COOLDOWN,
+                            max_newton_backtracks=paper_settings.NEWTON_MAX_BACKTRACKS)
 
     # Reshape vector solution to HR image and save
     x_hr = x_rec_vec.reshape(ops["hr_shape"])

@@ -36,8 +36,12 @@ def project_l1_ball(x):
     return z.value
 
 def ProxL_infinity(x,lamda):
+  if lamda < 0:
+    raise ValueError("The proximal parameter must be nonnegative.")
+  if lamda == 0:
+    return np.asarray(x, dtype=float).copy()
   if np.linalg.norm(x,1) <= lamda:
-    return (1-lamda)*x
+    return np.zeros_like(x, dtype=float)
   else:
     return x - lamda*project_l1_ball(x/lamda)
 

@@ -2,8 +2,9 @@ import pathlib, numpy as np
 import imageio.v3 as iio
 import matplotlib.pyplot as plt
 from math import ceil
+from benchmarks import paper_settings
 
-FOLDER = pathlib.Path("sequence")
+FOLDER = pathlib.Path(__file__).resolve().parent / "sequence"
 #FOLDER = pathlib.Path("reconstructed")
 SHOW_N = 3          # how many images to display
 COLS = 3            # grid columns
@@ -16,6 +17,11 @@ files = sorted([
 
 if not files:
     raise FileNotFoundError(f"No images found in {FOLDER.resolve()}")
+if len(files) != paper_settings.FIGURES_8_9_POISSON["n_frames"]:
+    raise ValueError(
+        "Figure 8 requires all 361 SMLM ISBI 2013 frames; "
+        f"found {len(files)}."
+    )
 
 def load_for_display(path):
     # If a TIFF has multiple pages, index=0 loads the first page

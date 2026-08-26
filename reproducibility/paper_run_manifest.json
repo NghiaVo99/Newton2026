@@ -1,0 +1,75 @@
+{
+  "manuscript": {
+    "filename": "Newton_s_method__Copy_ (4).pdf",
+    "sha256": "01de724cb080473676fa86eb06891b3906dfb03e7f12ffd6a1d656552bc7f0f4"
+  },
+  "archive_scope": {
+    "configuration_aligned": true,
+    "numerical_experiments_rerun_for_this_tag": false,
+    "legacy_outputs_are_new_results": false,
+    "note": "This final-review archive corrects and freezes the code and commands. Existing numerical outputs are retained as historical artifacts and were not regenerated."
+  },
+  "environment": {
+    "file": "environment-paper.yml",
+    "python": "3.12.7",
+    "benchopt": "1.9.0",
+    "hardware": "MacBook Pro, Apple M2 Pro, 16 GB RAM"
+  },
+  "runs": [
+    {
+      "paper_items": ["Figure 1"],
+      "entrypoint": "src/lasso/comparison.py",
+      "command": "python src/lasso/comparison.py",
+      "settings_key": "FIGURE_1_LASSO"
+    },
+    {
+      "paper_items": ["Figure 2"],
+      "entrypoint": "src/ell_inf/newton_infinity.py",
+      "command": "python src/ell_inf/newton_infinity.py",
+      "settings_key": "FIGURE_2_INFINITY"
+    },
+    {
+      "paper_items": ["Figure 3"],
+      "entrypoint": "src/OSCAR/OSCAR_run.py",
+      "command": "python src/OSCAR/OSCAR_run.py",
+      "settings_key": "FIGURE_3_OSCAR"
+    },
+    {
+      "paper_items": ["Figure 4"],
+      "entrypoint": "src/Gen_lasso/Gen_Lasso_run.py",
+      "command": "python src/Gen_lasso/Gen_Lasso_run.py",
+      "settings_key": "FIGURE_4_TV"
+    },
+    {
+      "paper_items": ["Table 1", "Figure 5"],
+      "entrypoint": "benchmarks/benchmark_lasso",
+      "config": "benchmarks/benchmark_lasso/paper_config.yml",
+      "command": "benchopt run benchmarks/benchmark_lasso --config benchmarks/benchmark_lasso/paper_config.yml --output paper_table1_figure5"
+    },
+    {
+      "paper_items": ["Table 2", "Figure 6"],
+      "entrypoint": "benchmarks/benchmark_oscar",
+      "config": "benchmarks/benchmark_oscar/paper_config.yml",
+      "command": "benchopt run benchmarks/benchmark_oscar --config benchmarks/benchmark_oscar/paper_config.yml --output paper_table2_figure6"
+    },
+    {
+      "paper_items": ["Table 3", "Figure 7"],
+      "entrypoint": "benchmarks/benchmark_tv_1d",
+      "config": "benchmarks/benchmark_tv_1d/paper_config.yml",
+      "command": "benchopt run benchmarks/benchmark_tv_1d --config benchmarks/benchmark_tv_1d/paper_config.yml --output paper_table3_figure7"
+    },
+    {
+      "paper_items": ["Figure 8"],
+      "entrypoint": "src/lasso/ISBI_viz.py",
+      "command": "python src/lasso/ISBI_viz.py",
+      "settings_key": "FIGURES_8_9_POISSON"
+    },
+    {
+      "paper_items": ["Figure 9"],
+      "entrypoint": "src/lasso/img_pipeline.py",
+      "postprocess": "src/lasso/tube_reconstruct.py",
+      "command": "python src/lasso/img_pipeline.py && python src/lasso/tube_reconstruct.py",
+      "settings_key": "FIGURES_8_9_POISSON"
+    }
+  ]
+}

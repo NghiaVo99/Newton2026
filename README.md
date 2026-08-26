@@ -40,7 +40,7 @@ benchmark suites.
 
 The core scripts use:
 
-- Python 3.11+
+- Python 3.12.7 (the version reported in the manuscript)
 - `numpy`
 - `scipy`
 - `matplotlib`
@@ -58,13 +58,16 @@ Several comparison solvers are optional:
 - `sortedl1` for OSCAR/SLOPE baselines
 - `modopt` for some FISTA baselines
 
-The recommended Benchopt environment is provided in
-`environment-benchopt.yml`:
+The paper-facing environment is provided in `environment-paper.yml` and pins
+the reported Python version:
 
 ```bash
-conda env create -f environment-benchopt.yml
-conda activate benchopt-lasso
+conda env create -f environment-paper.yml
+conda activate newton2026-paper
 ```
+
+`environment-benchopt.yml` remains available for development of the optional
+qpOASES experiments that are not part of Figures 1-9 or Tables 1-3.
 
 Optional benchmark extras can then be installed as needed:
 
@@ -79,35 +82,29 @@ Condat TV-1D proximal implementation.
 
 Run commands from the repository root.
 
-Lasso benchmark:
+The exact paper configurations are versioned and should be used instead of
+ad-hoc command-line selections. Lasso (Table 1 and Figure 5):
 
 ```bash
 benchopt run benchmarks/benchmark_lasso \
-  -d "Simulated[n_samples=500,n_features=600,rho=0]" \
-  -s Celer -s cd -s ista -s fista \
-  -s newton_ista -s newton_fista \
-  -s skglm -s sklearn
+  --config benchmarks/benchmark_lasso/paper_config.yml \
+  --output paper_table1_figure5
 ```
 
-OSCAR benchmark:
+OSCAR (Table 2 and Figure 6):
 
 ```bash
 benchopt run benchmarks/benchmark_oscar \
-  -d "Simulated[n_samples=500,n_features=200,n_signals=20,X_density=1.0,rho=0.8]" \
-  -o "OSCAR Regression[w1=1e-3,w2=1e-4,fit_intercept=False]" \
-  -s ADMM -s PGD -s skglm -s sortedl1 -s Newt-ALM \
-  -s newton_ista -s newton_fista -s newton_bt_ista -s newton_bt_fista
+  --config benchmarks/benchmark_oscar/paper_config.yml \
+  --output paper_table2_figure6
 ```
 
-TV-1D benchmark:
+TV-1D (Table 3 and Figure 7):
 
 ```bash
 benchopt run benchmarks/benchmark_tv_1d \
-  -d "Simulated[n_samples=500,n_features=600,type_A=random,type_x=block,type_n=gaussian]" \
-  -o "TV1D[data_fit=quad,delta=0,reg=0.5]" \
-  -s "ADMM analysis" -s "Celer synthesis" -s "CondatVu analysis" \
-  -s "Primal PGD analysis" -s "Primal PGD synthesis" -s "skglm synthesis" \
-  -s newton_ista -s newton_fista
+  --config benchmarks/benchmark_tv_1d/paper_config.yml \
+  --output paper_table3_figure7
 ```
 
 Benchopt writes interactive HTML and parquet outputs under each benchmark's
@@ -115,20 +112,21 @@ Benchopt writes interactive HTML and parquet outputs under each benchmark's
 
 ## Running Script-Based Experiments
 
-Many original experiments are script-driven and can be run directly, for
-example:
+The paper-facing standalone figures use the common settings in
+`benchmarks/paper_settings.py`:
 
 ```bash
 python src/lasso/comparison.py
-python src/Gen_lasso/Gen_Lasso_run.py
 python src/ell_inf/newton_infinity.py
 python src/OSCAR/OSCAR_run.py
-python src/Group_Lasso/comparison.py
+python src/Gen_lasso/Gen_Lasso_run.py
+python src/lasso/ISBI_viz.py
+python src/lasso/img_pipeline.py
+python src/lasso/tube_reconstruct.py
 ```
 
-Some scripts require optional solvers such as CVXPY or Gurobi, and some use
-hard-coded problem sizes or data paths.  See `docs/PROJECT_FEATURES_AND_WORKFLOWS.md`
-for a broader map of the repository.
+The complete command-to-table/figure mapping and the explicit no-rerun archive
+status are recorded in `reproducibility/paper_run_manifest.json`.
 
 ## Representative Results
 

@@ -1,0 +1,25 @@
+name: newton2026-paper
+channels:
+  - gurobi
+  - conda-forge
+dependencies:
+  - python=3.12.7
+  - numpy
+  - scipy
+  - matplotlib
+  - scikit-learn
+  - pandas
+  - numba
+  - cvxpy
+  - gurobi::gurobi=12.0
+  - pip
+  - pip:
+      - benchopt==1.9.0
+      - celer
+      - imageio
+      - modopt
+      - pyproximal
+      - scikit-image
+      - skglm
+      - sortedl1
+      - tifffile
